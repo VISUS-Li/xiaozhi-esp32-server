@@ -1,0 +1,118 @@
+# 故事模式配置
+# 这是一个单独的模块的配置，为了避免和主配置冲突，命名为*-module.yaml或者*-module.yml，会被config/module_config.py自动识别，以自动添加到现有的配置中
+enabled: true
+# 角色列表配置
+voices:
+  # 旁白音色配置
+  narrators:
+    - name: "标准旁白"
+      description: "平稳清晰的标准旁白音色"
+      tts:
+        type: edge
+        voice: zh-CN-YunyangNeural
+    
+    - name: "温柔旁白"
+      description: "柔和舒缓的旁白音色"
+      tts:
+        type: edge
+        voice: zh-CN-XiaoxiaoNeural
+    
+    - name: "戏剧旁白"
+      description: "富有戏剧性的旁白音色"
+      tts:
+        type: fishspeech
+        reference_id: null
+        reference_audio: ["/tmp/dramatic_narrator.wav"]
+        reference_text: ["这是一个不平凡的故事，它开始于一个平凡的日子。"]
+  
+  # 角色音色配置
+  characters:
+    - name: "女性-年轻"
+      description: "年轻女性的活泼音色"
+      tts:
+        type: edge
+        voice: zh-CN-XiaoxiaoNeural
+    
+    - name: "女性-成熟"
+      description: "成熟女性的稳重音色"
+      tts:
+        type: edge
+        voice: zh-CN-XiaoyiNeural
+    
+    - name: "男性-年轻"
+      description: "年轻男性的活力音色"
+      tts:
+        type: edge
+        voice: zh-CN-YunxiNeural
+    
+    - name: "男性-成熟"
+      description: "成熟男性的浑厚音色"
+      tts:
+        type: edge
+        voice: zh-CN-YunyangNeural
+    
+    - name: "台湾口音"
+      description: "带有台湾口音的女性音色"
+      tts:
+        type: doubao
+        voice: zh_female_wanwanxiaohe_moon_bigtts
+    
+    - name: "机器人"
+      description: "带有电子感的机器人音色"
+      tts:
+        type: edge
+        voice: zh-CN-YunxiNeural
+        # 可以添加特殊处理参数
+        processing:
+          pitch: -5
+          rate: 0.9
+    
+    - name: "老人"
+      description: "年长者特征的音色"
+      tts:
+        type: fishspeech
+        reference_id: null
+        reference_audio: ["/tmp/elder.wav"]
+        reference_text: ["我已经活了很长时间，见证了许多事情。"]
+    
+    - name: "儿童"
+      description: "儿童特征的音色"
+      tts:
+        type: edge
+        voice: zh-CN-XiaoxiaoNeural
+        processing:
+          pitch: 5
+          rate: 1.1
+
+  # 特殊音色配置（如动物、非人类等）
+  special:
+    - name: "动物-猫"
+      description: "猫的拟人化音色"
+      tts:
+        type: gpt_sovits_v3
+        refer_wav_path: "cat_person.wav"
+    
+    - name: "动物-狗"
+      description: "狗的拟人化音色"
+      tts:
+        type: fishspeech
+        reference_audio: ["/tmp/dog_character.wav"]
+        reference_text: ["汪汪，我是一只快乐的小狗。"]
+    
+    - name: "自然元素-风"
+      description: "风的拟人化音色"
+      tts:
+        type: minimax
+        voice_id: "female-shaonv"
+        voice_setting:
+          speed: 0.8
+          emotion: "soft"
+
+# 交互配置
+interaction:
+  # 允许用户中断
+  allow_interruption: true
+  # 是否在故事结束后询问反馈
+  ask_for_feedback: true
+  # 是否允许用户请求修改故事
+  allow_revision: true

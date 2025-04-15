@@ -35,6 +35,30 @@ class Dialogue:
             self.getMessages(m, dialogue)
         return dialogue
 
+    def get_last_n_messages(self, n: int) -> List[Dict[str, str]]:
+        """获取最后n条消息的对话历史"""
+        last_n = self.dialogue[-n:] if len(self.dialogue) >= n else self.dialogue
+        dialogue = []
+        for m in last_n:
+            self.getMessages(m, dialogue)
+        return dialogue
+
+    def get_last_assistant_message(self) -> Message:
+        """获取最后一条助手消息"""
+        for msg in reversed(self.dialogue):
+            if msg.role == "assistant":
+                return msg
+        return None
+    
+    def get_last_n_message_without_system(self, n: int) -> Message:
+        """获取最后n条消息的对话历史，不包括系统消息"""
+        last_n = self.dialogue[-n:] if len(self.dialogue) >= n else self.dialogue
+        dialogue = []
+        for m in last_n:
+            if m.role != "system":
+                self.getMessages(m, dialogue)
+        return dialogue
+
     def update_system_message(self, new_content: str):
         """更新或添加系统消息"""
         # 查找第一个系统消息

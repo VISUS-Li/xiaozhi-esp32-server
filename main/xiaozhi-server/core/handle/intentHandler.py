@@ -5,6 +5,7 @@ from core.handle.sendAudioHandle import send_stt_message
 from core.handle.helloHandle import checkWakeupWords
 from core.utils.util import remove_punctuation_and_length
 from core.utils.dialogue import Message
+from core.handle.storyModeHandler import handle_story_mode, check_story_mode_keywords
 from loguru import logger
 
 TAG = __name__
@@ -18,6 +19,16 @@ async def handle_user_intent(conn, text):
     # 检查是否是唤醒词
     if await checkWakeupWords(conn, text):
         return True
+        
+    # 检查是否已在故事模式或需要进入故事模式
+    if hasattr(conn, 'in_story_mode') and conn.in_story_mode:
+        # 已经在故事模式中，交给故事模式处理器
+        return await handle_story_mode(conn, text)
+    
+    # 检查是否包含故事模式触发关键词
+    if await check_story_mode_keywords(conn, text):
+        # 包含故事模式关键词，进入故事模式
+        return await handle_story_mode(conn, text)
 
     if conn.use_function_call_mode:
         # 使用支持function calling的聊天方法,不再进行意图分析

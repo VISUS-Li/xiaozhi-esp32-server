@@ -3,6 +3,7 @@ import argparse
 from ruamel.yaml import YAML
 from collections.abc import Mapping
 from core.utils.util import read_config, get_project_dir
+from config.module_config import merge_configs  # 导入合并配置的函数
 
 default_config_file = "config.yaml"
 
@@ -62,7 +63,13 @@ def load_config():
 
     parser.add_argument("--config_path", type=str, default=config_file)
     args = parser.parse_args()
+    
+    # 加载主配置
     config = read_config(args.config_path)
+    
+    # 合并模块配置
+    config = merge_configs(config)
+    
     # 初始化目录
     ensure_directories(config)
     return config
