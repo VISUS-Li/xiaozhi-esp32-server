@@ -59,8 +59,9 @@ voices:
       description: "带有台湾口音的女性音色"
       gender: "female"
       tts:
-        type: doubao
-        voice: zh_female_wanwanxiaohe_moon_bigtts
+        type: fishspeech
+        reference_audio: ["tmp/nailong.mp3"]
+        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
     
     - name: "机器人"
       description: "带有电子感的机器人音色"
@@ -78,9 +79,8 @@ voices:
       gender: "male"
       tts:
         type: fishspeech
-        reference_id: null
-        reference_audio: ["tmp/elder.wav"]
-        reference_text: ["我已经活了很长时间，见证了许多事情。"]
+        reference_audio: ["tmp/cxk.mp3"]
+        reference_text: ["大家好，最近一直在练习室准备新歌，每天都在追求更好的表现。感谢粉丝们一直以来的支持"]
     
     - name: "儿童"
       description: "儿童特征的音色"
@@ -97,24 +97,23 @@ voices:
     - name: "动物-猫"
       description: "猫的拟人化音色"
       tts:
-        type: gpt_sovits_v3
-        refer_wav_path: "cat_person.wav"
+        type: fishspeech
+        reference_audio: ["tmp/nailong.mp3"]
+        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
     
     - name: "动物-狗"
       description: "狗的拟人化音色"
       tts:
         type: fishspeech
-        reference_audio: ["tmp/dog_character.wav"]
-        reference_text: ["汪汪，我是一只快乐的小狗。"]
+        reference_audio: ["tmp/cxk.mp3"]
+        reference_text: ["大家好，最近一直在练习室准备新歌，每天都在追求更好的表现。感谢粉丝们一直以来的支持"]
     
     - name: "自然元素-风"
       description: "风的拟人化音色"
       tts:
-        type: minimax
-        voice_id: "female-shaonv"
-        voice_setting:
-          speed: 0.8
-          emotion: "soft"
+        type: fishspeech
+        reference_audio: ["tmp/nailong.mp3"]
+        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
 
 # 交互配置
 interaction:

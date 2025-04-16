@@ -119,6 +119,7 @@ class PromptTemplate:
             formatted_str += "注意，你的本次响应必须符合以下token数量的限制："
         if self.max_tokens is not None:
             formatted_str += f"最大token: {self.max_tokens}\n"
+            formatted_str += "但是请注意很重要的一点，如果要求回答为json格式，则可以忽略max_tokens的限制，而必须首先确保json schema结构完整，能够解析json\n"
         if self.min_tokens is not None:
             if formatted_str:
                 formatted_str += ", "
@@ -158,11 +159,41 @@ class PromptTemplate:
             if 0 <= start_idx < end_idx:
                 json_str = text[start_idx:end_idx+1]
                 data = json.loads(json_str)
+                
                 if self.output_schema_model is not None:
-                    # 使用Pydantic模型验证
-                    return self.output_schema_model(**data)
+                    try:
+                        # 尝试使用Pydantic模型验证
+                        return self.output_schema_model(**data)
+                    except Exception as e:
+                        logger.bind(tag=TAG).warning(f"Pydantic模型验证失败，将使用自定义对象访问模式: {str(e)}")
+                        return AttrDict(data)
+                else:
+                    # 如果没有模型，则返回带属性访问的字典
+                    return AttrDict(data)
             else:
                 raise ValueError("未找到JSON对象")
         except Exception as e:
             logger.bind(tag=TAG).error(f"解析JSON输出时出错: {str(e)}")
             raise
+
+# 添加一个辅助类，允许同时以属性和字典方式访问数据
+class AttrDict(dict):
+    """允许通过属性访问的字典类"""
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+        
+        # 递归处理嵌套的字典和列表
+        for key, value in self.items():
+            if isinstance(value, dict):
+                self[key] = AttrDict(value)
+            elif isinstance(value, list):
+                self[key] = [
+                    AttrDict(item) if isinstance(item, dict) else item
+                    for item in value
+                ]
+    
+    # 提供属性访问的兜底方法
+    def __getattr__(self, name):
+        # 尝试从字典获取，如果不存在则返回None而不是抛出异常
+        return self.get(name)

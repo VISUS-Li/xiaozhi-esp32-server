@@ -278,15 +278,24 @@ class StreamingTextProcessor:
             story_data = template.parse(json_text)
             
             # 检查是否有story_seg字段
-            if not hasattr(story_data, "story_seg") or not story_data.story_seg:
+            story_seg = getattr(story_data, "story_seg", None) if hasattr(story_data, "story_seg") else story_data.get("story_seg")
+            if not story_seg:
                 logger.bind(tag=TAG).error(f"解析的故事数据缺少story_seg字段: {story_data}")
                 return
             
+            # 检查故事是否已结束
+            ended = getattr(story_data, "ended", False) if hasattr(story_data, "ended") else story_data.get("ended", False)
+            if ended:
+                logger.bind(tag=TAG).info("故事已标记为结束状态")
+            
             # 处理故事片段
-            for i, segment in enumerate(story_data.story_seg):
+            for i, segment in enumerate(story_seg):
                 text_index += 1
                 
-                if segment.is_role:
+                # 支持两种访问方式：属性访问或字典访问
+                is_role = getattr(segment, "is_role", None) if hasattr(segment, "is_role") else segment.get("is_role")
+                
+                if is_role:
                     # 处理角色对话
                     await self._process_role_dialogue(segment, text_index)
                 else:
@@ -303,10 +312,18 @@ class StreamingTextProcessor:
     async def _process_role_dialogue(self, segment, text_index):
         """处理角色对话"""
         try:
-            role_name = segment.role_name
-            content = segment.content
-            mood = getattr(segment, "mood", "")
-            mood_location = getattr(segment, "mood_location", 2)  # 默认在对话后
+            # 支持两种访问方式
+            role_name = getattr(segment, "role_name", None) if hasattr(segment, "role_name") else segment.get("role_name", "")
+            content = getattr(segment, "content", None) if hasattr(segment, "content") else segment.get("content", "")
+            mood = getattr(segment, "mood", "") if hasattr(segment, "mood") else segment.get("mood", "")
+            mood_location = getattr(segment, "mood_location", 2) if hasattr(segment, "mood_location") else segment.get("mood_location", 2)
+            
+            # 获取性别，用于选择合适的语音
+            role_gender = None
+            if hasattr(segment, "role_gender"):
+                role_gender = segment.role_gender
+            elif "role_gender" in segment:
+                role_gender = segment["role_gender"]
             
             # 根据mood_location组装完整句子
             if mood_location == 1:
@@ -317,7 +334,7 @@ class StreamingTextProcessor:
                 full_text = f"{role_name}说道：{content}{mood}"
             
             # 获取角色的语音配置
-            tts_config = self._get_role_voice(role_name, segment.role_gender if hasattr(segment, "role_gender") else None)
+            tts_config = self._get_role_voice(role_name, role_gender)
             
             # 记录文本位置
             if hasattr(self.conn, 'recode_first_last_text'):
@@ -340,11 +357,18 @@ class StreamingTextProcessor:
             
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理角色对话时出错: {e}")
+            logger.bind(tag=TAG).error(f"错误详情: {str(e)}")
+            # 记录segment内容以便调试
+            try:
+                logger.bind(tag=TAG).debug(f"段落内容: {segment}")
+            except:
+                pass
     
     async def _process_narrator(self, segment, text_index):
         """处理旁白"""
         try:
-            content = segment.content
+            # 支持两种访问方式
+            content = getattr(segment, "content", None) if hasattr(segment, "content") else segment.get("content", "")
             
             # 记录文本位置
             if hasattr(self.conn, 'recode_first_last_text'):
@@ -370,6 +394,12 @@ class StreamingTextProcessor:
             
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理旁白时出错: {e}")
+            logger.bind(tag=TAG).error(f"错误详情: {str(e)}")
+            # 记录segment内容以便调试
+            try:
+                logger.bind(tag=TAG).debug(f"段落内容: {segment}")
+            except:
+                pass
     
     def _get_role_voice(self, role_name, gender=None):
         """获取角色的语音配置，保持一致性"""
@@ -492,20 +522,7 @@ class StreamingTextProcessor:
                 # 将音频数据加入播放队列
                 self.conn.audio_play_queue.put((opus_data, text, text_index))
             
-            # 删除临时音频文件
-            if self.conn.config.get("delete_audio_file", True) and audio_file:
-                import os
-                try:
-                    os.remove(audio_file)
-                except:
-                    pass
-            
-            return {
-                "text": text,
-                "text_index": text_index,
-                "duration": duration,
-                "custom_voice": True
-            }
+            return audio_file, text, text_index
         except Exception as e:
             logger.bind(tag=TAG).error(f"自定义语音生成出错: {e}")
             # 如果失败，使用默认方法
@@ -526,26 +543,39 @@ class StreamingTextProcessor:
             # 按顺序处理各个部分
             outline_parts = []
             
+            # 辅助函数，尝试获取属性或字典值
+            def get_value(obj, key):
+                if hasattr(obj, key):
+                    return getattr(obj, key)
+                elif isinstance(obj, dict) and key in obj:
+                    return obj[key]
+                return None
+            
             # 1. 标题
-            if hasattr(outline_data, "title"):
-                outline_parts.append(f"故事的标题是：{outline_data.title}")
+            title = get_value(outline_data, "title")
+            if title:
+                outline_parts.append(f"故事的标题是：{title}")
             
             # 2. 角色
-            if hasattr(outline_data, "roles") and outline_data.roles:
-                roles_text = "，".join(outline_data.roles)
+            roles = get_value(outline_data, "roles")
+            if roles:
+                roles_text = "，".join(roles) if isinstance(roles, list) else str(roles)
                 outline_parts.append(f"故事中的角色有：{roles_text}")
             
             # 3. 场景
-            if hasattr(outline_data, "scene"):
-                outline_parts.append(f"故事发生在：{outline_data.scene}")
+            scene = get_value(outline_data, "scene")
+            if scene:
+                outline_parts.append(f"故事发生在：{scene}")
             
             # 4. 大纲
-            if hasattr(outline_data, "outline"):
-                outline_parts.append(f"故事的情节是：{outline_data.outline}")
+            outline = get_value(outline_data, "outline")
+            if outline:
+                outline_parts.append(f"故事的情节是：{outline}")
             
             # 5. 寓意
-            if hasattr(outline_data, "meaning"):
-                outline_parts.append(f"故事的寓意是：{outline_data.meaning}")
+            meaning = get_value(outline_data, "meaning")
+            if meaning:
+                outline_parts.append(f"故事的寓意是：{meaning}")
                         
             # 依次生成语音
             for i, part in enumerate(outline_parts):
@@ -575,6 +605,7 @@ class StreamingTextProcessor:
             
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理故事大纲JSON时出错: {e}")
+            logger.bind(tag=TAG).error(f"错误详情: {str(e)}")
             # 如果解析失败，尝试作为普通文本处理
             segment_text = get_string_no_punctuation_or_emoji(json_text)
             if segment_text:

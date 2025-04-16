@@ -49,10 +49,10 @@ async def enter_story_mode(conn, text):
     
     # 获取当前文本索引
     text_index = conn.tts_last_text_index + 1 if hasattr(conn, 'tts_last_text_index') else 0
-    conn.recode_first_last_text(initial_prompt, text_index)
+    conn.recode_first_last_text(initial_prompt.template, text_index)
     
     # 生成并播放初始反馈
-    future = conn.executor.submit(conn.speak_and_play, initial_prompt, text_index)
+    future = conn.executor.submit(conn.speak_and_play, initial_prompt.template, text_index)
     conn.tts_queue.put(future)
     
     # 记录对话
@@ -107,6 +107,12 @@ def is_story_mode_active(message):
         if start_idx >= 0 and end_idx > start_idx:
             json_part = content[start_idx:end_idx+1]
             data = json.loads(json_part)
+            
+            # 如果存在ended字段且为真，表示故事已结束
+            if "ended" in data and data["ended"] is True:
+                logger.bind(tag=TAG).info("检测到故事已结束标记")
+                return False
+                
             # 检查story_mode标记
             return data.get("story_mode", False)
     except Exception as e:
@@ -275,7 +281,28 @@ async def process_user_story_input(conn, text):
                 conn.in_story_mode = False
                 logger.bind(tag=TAG).info("故事模式结束")
             else:
-                # 如果继续故事模式，准备下一段续写内容
+                # 检查故事是否已经结束
+                try:
+                    # 尝试解析JSON以检查ended标志
+                    story_data = prompt_template.parse(complete_response)
+                    ended = getattr(story_data, "ended", False) if hasattr(story_data, "ended") else story_data.get("ended", False)
+                    
+                    if ended:
+                        logger.bind(tag=TAG).info("故事已经结束，不再准备后续内容")
+                        # 修改连接状态，标记故事模式结束
+                        conn.in_story_mode = False
+                        
+                        # 发送故事结束提示
+                        exit_message = "故事讲完了。希望您喜欢这个故事！有任何其他需要，请告诉我。"
+                        text_index = conn.tts_last_text_index + 1 if hasattr(conn, 'tts_last_text_index') else 0
+                        conn.recode_first_last_text(exit_message, text_index)
+                        future = conn.executor.submit(conn.speak_and_play, exit_message, text_index)
+                        conn.tts_queue.put(future)
+                        return
+                except Exception as e:
+                    logger.bind(tag=TAG).error(f"检查故事结束状态时出错: {e}")
+                
+                # 只有故事未结束时，才准备下一段内容
                 asyncio.create_task(prepare_story_continuation(conn))
         
         # 使用流式处理器处理
@@ -359,6 +386,21 @@ async def prepare_story_continuation(conn):
             # 更新故事阶段为交互阶段
             conn.story_session.update_stage("story_continuation")
             
+            # 检查故事是否已经结束
+            try:
+                # 尝试解析JSON以检查ended标志
+                story_data = prompt_template.parse(complete_response)
+                ended = getattr(story_data, "ended", False) if hasattr(story_data, "ended") else story_data.get("ended", False)
+                
+                if ended:
+                    logger.bind(tag=TAG).info("故事已经结束，不再准备后续内容")
+                    # 修改连接状态，标记故事模式结束
+                    conn.in_story_mode = False
+                    return
+            except Exception as e:
+                logger.bind(tag=TAG).error(f"检查故事结束状态时出错: {e}")
+            
+            # 只有故事未结束时，才准备下一段内容
             asyncio.create_task(prepare_story_continuation(conn))
         
         # 使用流式处理器处理

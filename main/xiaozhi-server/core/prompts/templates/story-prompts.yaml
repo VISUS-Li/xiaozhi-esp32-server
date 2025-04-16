@@ -7,7 +7,7 @@ story_mode_intro:
 
 outline_generation:
   llm: AliLLM
-  max_tokens: 300
+  max_tokens: 600
   template_path: markdown/outline_generation.md
   type: "story"
   role: "user"
@@ -47,7 +47,7 @@ outline_generation:
           description: "故事的寓意，由于故事是针对儿童的，所以故事要有积极的教育意义，是一种深层次的寓意"
 
 story_continuation:
-  max_tokens: 200
+  max_tokens: 1000
   llm: ChatGLMLLM
   template_path: markdown/story_continuation.md
   type: "story"
