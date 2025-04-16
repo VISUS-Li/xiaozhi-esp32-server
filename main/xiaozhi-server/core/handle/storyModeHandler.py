@@ -8,6 +8,7 @@ import asyncio
 from core.prompts import PromptManager
 import re
 from core.storymode.streaming_processor import StreamingTextProcessor
+import os
 
 TAG = __name__
 logger = setup_logging()
@@ -47,17 +48,27 @@ async def enter_story_mode(conn, text):
     # 获取故事模式的初始提示词
     initial_prompt = prompt_manager.get_template("story_mode_intro")
     
-    # 获取当前文本索引
+    # 记录对话内容，但使用预先生成的语音文件进行回复
+    if initial_prompt.formatted_prompt is not None or initial_prompt.formatted_prompt != "":
+        conn.dialogue.put(Message(role="assistant", content=initial_prompt.formatted_prompt))
+    
+    # 获取当前文本索引并记录文本内容
     text_index = conn.tts_last_text_index + 1 if hasattr(conn, 'tts_last_text_index') else 0
     conn.recode_first_last_text(initial_prompt.template, text_index)
     
-    # 生成并播放初始反馈
-    future = conn.executor.submit(conn.speak_and_play, initial_prompt.template, text_index)
-    conn.tts_queue.put(future)
-    
-    # 记录对话
-    if initial_prompt.formatted_prompt is not None or initial_prompt.formatted_prompt != "":
-        conn.dialogue.put(Message(role="assistant", content=initial_prompt.formatted_prompt))
+    # 使用预先生成的语音文件代替TTS生成
+    story_start_file = "tmp/nailong-start.mp3"
+    if os.path.exists(story_start_file) and os.path.isfile(story_start_file):
+        # 将音频文件转换为opus格式
+        opus_packets, duration = conn.tts.audio_to_opus_data(story_start_file)
+        # 将音频数据放入播放队列
+        conn.audio_play_queue.put((opus_packets, initial_prompt.template, text_index))
+        logger.bind(tag=TAG).info("使用预生成语音文件进行故事模式初始反馈")
+    else:
+        # 如果预生成文件不存在，回退到实时TTS生成
+        logger.bind(tag=TAG).warning(f"预生成语音文件 {story_start_file} 不存在，使用实时TTS生成")
+        future = conn.executor.submit(conn.speak_and_play, initial_prompt.template, text_index)
+        conn.tts_queue.put(future)
     
     # 提取故事主题
     theme_data = await extract_story_theme(conn, text)
