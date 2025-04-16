@@ -1,6 +1,10 @@
 from core.prompts import PromptManager
 from core.utils import asr, vad, llm, tts, memory, intent
 from config.module_config import get_module_config
+from config.logger import setup_logging
+
+TAG = __name__
+logger = setup_logging()
 
 class StorySession:
     def __init__(self, conn, session_id):
@@ -44,7 +48,7 @@ class StorySession:
         """初始化各阶段所需的 LLM 实例"""
         self.llm_instances = {}
         
-        # 从 story_prompts.yaml 读取各阶段所需的 LLM 配置
+        # 从 story-prompts.yaml 读取各阶段所需的 LLM 配置
         for template_name, template_data in self.prompt_manager.templates_data.items():
             # 检查模板是否属于故事模式
             if template_data.get("type") == "story":
@@ -53,8 +57,7 @@ class StorySession:
                 )
                     
         # 记录初始化的LLM实例
-        from loguru import logger
-        logger.info(f"故事模式初始化了 {len(self.llm_instances)} 个LLM实例: {list(self.llm_instances.keys())}")
+        logger.bind(tag=TAG).info(f"故事模式初始化了 {len(self.llm_instances)} 个LLM实例: {list(self.llm_instances.keys())}")
         
     def get_llm(self, stage):
         """获取指定阶段的 LLM 实例"""
@@ -78,8 +81,7 @@ class StorySession:
                 return self.llm_instances[template_name]
         
         # 如果所有尝试都失败，返回默认LLM
-        from loguru import logger
-        logger.warning(f"未找到阶段 '{stage}' 对应的LLM实例，使用默认LLM")
+        logger.bind(tag=TAG).warning(f"未找到阶段 '{stage}' 对应的LLM实例，使用默认LLM")
         return self.conn.llm
     
     def get_dialogue(self, stage):

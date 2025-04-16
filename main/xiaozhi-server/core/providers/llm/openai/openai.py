@@ -1,4 +1,5 @@
 import openai
+import time
 from config.logger import setup_logging
 from core.utils.util import check_model_key
 from core.providers.llm.base import LLMProviderBase
@@ -22,12 +23,14 @@ class LLMProvider(LLMProviderBase):
 
     def response(self, session_id, dialogue):
         try:
+            start_time = time.time()
             responses = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=dialogue,
                 stream=True,
                 max_tokens=self.max_tokens,
             )
+            logger.bind(tag=TAG).info(f"调用模型 {self.model_name} 耗时: {time.time() - start_time:.3f}s")
 
             is_active = True
             for chunk in responses:
@@ -53,12 +56,14 @@ class LLMProvider(LLMProviderBase):
 
     def response_with_functions(self, session_id, dialogue, functions=None):
         try:
+            start_time = time.time()
             stream = self.client.chat.completions.create(
                 model=self.model_name,
                 messages=dialogue,
                 stream=True,
                 tools=functions
             )
+            logger.bind(tag=TAG).info(f"调用模型 {self.model_name} 耗时: {time.time() - start_time:.3f}s")
 
             for chunk in stream:
                 yield chunk.choices[0].delta.content, chunk.choices[0].delta.tool_calls

@@ -22,43 +22,49 @@ voices:
       tts:
         type: fishspeech
         reference_id: null
-        reference_audio: ["/tmp/dramatic_narrator.wav"]
-        reference_text: ["这是一个不平凡的故事，它开始于一个平凡的日子。"]
+        reference_audio: ["tmp/leijun.mp3"]
+        reference_text: ["大家好！今天给大家带来一款重磅产品，性能提升了80%，但是价格只要友商的一半。这不仅仅是一个产品，更是一个精品。让我问问大家，这个价格，你们觉得怎么样？are you OK？"]
   
   # 角色音色配置
   characters:
     - name: "女性-年轻"
       description: "年轻女性的活泼音色"
+      gender: "female"
       tts:
         type: edge
         voice: zh-CN-XiaoxiaoNeural
     
     - name: "女性-成熟"
       description: "成熟女性的稳重音色"
+      gender: "female"
       tts:
         type: edge
         voice: zh-CN-XiaoyiNeural
     
     - name: "男性-年轻"
       description: "年轻男性的活力音色"
+      gender: "male"
       tts:
         type: edge
         voice: zh-CN-YunxiNeural
     
     - name: "男性-成熟"
       description: "成熟男性的浑厚音色"
+      gender: "male"
       tts:
         type: edge
         voice: zh-CN-YunyangNeural
     
     - name: "台湾口音"
       description: "带有台湾口音的女性音色"
+      gender: "female"
       tts:
         type: doubao
         voice: zh_female_wanwanxiaohe_moon_bigtts
     
     - name: "机器人"
       description: "带有电子感的机器人音色"
+      gender: "male"
       tts:
         type: edge
         voice: zh-CN-YunxiNeural
@@ -69,14 +75,16 @@ voices:
     
     - name: "老人"
       description: "年长者特征的音色"
+      gender: "male"
       tts:
         type: fishspeech
         reference_id: null
-        reference_audio: ["/tmp/elder.wav"]
+        reference_audio: ["tmp/elder.wav"]
         reference_text: ["我已经活了很长时间，见证了许多事情。"]
     
     - name: "儿童"
       description: "儿童特征的音色"
+      gender: "male"
       tts:
         type: edge
         voice: zh-CN-XiaoxiaoNeural
@@ -96,7 +104,7 @@ voices:
       description: "狗的拟人化音色"
       tts:
         type: fishspeech
-        reference_audio: ["/tmp/dog_character.wav"]
+        reference_audio: ["tmp/dog_character.wav"]
         reference_text: ["汪汪，我是一只快乐的小狗。"]
     
     - name: "自然元素-风"

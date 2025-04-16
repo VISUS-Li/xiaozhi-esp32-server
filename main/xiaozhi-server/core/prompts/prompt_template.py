@@ -1,8 +1,11 @@
 from typing import Dict, Any, Type
 import json
-from loguru import logger
+from config.logger import setup_logging
 
 from pydantic import BaseModel, Field, create_model
+
+TAG = __name__
+logger = setup_logging()
 
 
 def _get_field_type(type_str: str) -> Type:
@@ -99,39 +102,15 @@ class PromptTemplate:
             return ""
         
         # 创建用于展示的schema
-        display_schema = self._create_display_schema()
-        schema_str = json.dumps(display_schema, ensure_ascii=False, indent=2)
+        # display_schema = self._create_display_schema()
+        schema_str = json.dumps(self.schema, ensure_ascii=False, indent=2)
         
-        return f"""您的响应必须是一个符合以下JSON Schema的JSON对象:
+        return f"""你的响应必须是一个符合以下JSON Schema的JSON对象，注意在required列表中的字段是必须填有意义的内容，不能填写空值或未知等内容:
 ```json
         {schema_str}
 ```
-请确保您的响应可以被JSON解析，并且匹配上述的Schema结构。
+请确保你的响应可以被JSON解析，并且匹配上述的Schema结构。
         """
-    
-    def _create_display_schema(self) -> Dict[str, Any]:
-        """创建用于展示的schema，标记每个字段是否必需"""
-        # 初始化display_schema
-        display_schema = {}
-        
-        # 确定要处理的schema部分
-        target_schema = self.schema
-
-        # 如果schema包含output部分，则使用output部分
-        if isinstance(target_schema, dict) and "output" in target_schema:
-            target_schema = target_schema.get("output", {})
-            
-        # 处理属性
-        if isinstance(target_schema, dict):
-            for field_name, field_schema in target_schema.get("properties", {}).items():
-                field_info = field_schema.copy()
-                is_required = field_info.pop("required", False)
-                if is_required:
-                    field_info["required"] = is_required
-                
-                display_schema[field_name] = field_info
-        
-        return display_schema
 
     def get_max_min_token_formatted(self) -> str:
         """获取最大最小token的格式化字符串"""
@@ -185,5 +164,5 @@ class PromptTemplate:
             else:
                 raise ValueError("未找到JSON对象")
         except Exception as e:
-            logger.error(f"解析JSON输出时出错: {str(e)}")
+            logger.bind(tag=TAG).error(f"解析JSON输出时出错: {str(e)}")
             raise

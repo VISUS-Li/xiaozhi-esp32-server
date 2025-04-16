@@ -1,12 +1,12 @@
 story_mode_intro:
-  llm: ChatGLMLLM
+  llm: AliLLM
   template_path: markdown/story_mode_intro.md #路径为相对yaml文件的相对路径，或者直接给绝对路径
   type: "story"
   role: "assistant"
   max_tokens: 100
 
 outline_generation:
-  llm: ChatGLMLLM
+  llm: AliLLM
   max_tokens: 300
   template_path: markdown/outline_generation.md
   type: "story"
@@ -15,45 +15,39 @@ outline_generation:
     title: "StoryOutlineSchema"
     input:
       type: "object"
+      required: ["theme", "age_group", "style"]
       properties:
         theme:
           type: "string"
           description: "用户指定的故事主题"
-          required: false
         age_group:
           type: "string"
           description: "目标年龄段"
-          required: false
         style:
           type: "string" 
           description: "故事风格"
-          required: false
     output:
       type: "object"
+      required: ["title", "roles", "scene", "outline", "meaning"]
       properties:
         title:
           type: "string"
           description: "故事标题"
-          required: true
         roles:
           type: "array"
           description: "故事中的角色名称列表"
-          required: true
         scene:
           type: "string"
           description: "故事发生的场景和背景描述"
-          required: true
         outline:
           type: "string"
           description: "故事的情节大纲"
-          required: true
         meaning:
           type: "string"
           description: "故事的寓意，由于故事是针对儿童的，所以故事要有积极的教育意义，是一种深层次的寓意"
-          required: true
 
 story_continuation:
-  max_tokens: 100
+  max_tokens: 200
   llm: ChatGLMLLM
   template_path: markdown/story_continuation.md
   type: "story"
@@ -62,27 +56,27 @@ story_continuation:
     title: "StoryContinuationSchema"
     input:
       type: "object"
+      required: ["outline"]
       properties:
         outline:
           type: "string"
           description: "整个故事的大纲"
-          required: true
         before:
           type: "string"
           description: "已经生成的故事内容，用于故事续写，若为空则为首次创作"
-          required: false
         user_input:
           type: "string"
           description: "用户的输入或反馈"
-          required: false
     output:
       type: "object"
+      required: ["story_seg", "ended"]
       properties:
         story_seg:
           type: "array"
           description: "故事分段，是一个数组，包含了故事的每一句话"
           items:
             type: "object"
+            required: ["is_role", "content",]
             properties:
               is_role:
                 type: "boolean"
@@ -90,6 +84,9 @@ story_continuation:
               role_name:
                 type: "string"
                 description: "角色名字，若为旁白则为空字符串，若为一群角色如'动物们'则需使用如'小狗A'或'小狗1'等方式区分"
+              role_gender:
+                type: "string"
+                description: "角色性别，若为旁白则为空字符串，若为角色则需指定性别，如'female'或'male'"
               content:
                 type: "string"
                 description: "句子内容，如果是角色说的话只包含话语内容，不含情绪动作描述"
@@ -99,19 +96,15 @@ story_continuation:
               mood:
                 type: "string"
                 description: "角色说话的情绪和动作描述，仅当content是角色对话时有效"
-                required: false
               mood_location:
                 type: "integer"
                 description: "情绪动作位置，1表示在话语前面，2表示在话语后面"
-                required: false
-          required: true
         ended:
           type: "boolean"
           description: "故事是否已经结束"
-          required: true
 
 story_theme_extraction:
-  llm: ChatGLMLLM
+  llm: AliLLM
   template_path: markdown/story_theme_extraction.md
   type: "story"
   role: "user"
@@ -119,41 +112,36 @@ story_theme_extraction:
     title: "StoryThemeExtractionSchema"
     input:
       type: "object"
+      required: ["text"]
       properties:
         text:
           type: "string"
           description: "用户的输入文本"
-          required: false
         user_info:
           type: "object"
           description: "关于用户的信息，包括记忆和对话历史"
-          required: false
     output:
       type: "object"
+      required: ["theme", "age_group", "style", "has_explicit_theme"]
       properties:
         theme:
           type: "string"
           description: "推断的主题，如童话故事、科幻、冒险等"
-          required: true
         age_group:
           type: "string"
           description: "适合的年龄段，如儿童、青少年、成人"
-          required: true
         style:
           type: "string"
           description: "故事风格，如幽默、紧张、温馨等"
-          required: true
         user_summary:
           type: "string"
           description: "用户的相关信息总结，用以生成符合用户性格、特点、爱好、经历的故事"
-          required: false
         has_explicit_theme:
           type: "boolean"
           description: "用户是否明确指定了主题"
-          required: true
 
 content_judge:
-  llm: ChatGLMLLM
+  llm: AliLLM
   template: markdown/content_judge
   type: "story"
   role: "user"
@@ -161,31 +149,27 @@ content_judge:
     title: "ContentJudgeSchema"
     input:
       type: "object"
+      required: ["text", "story_content"]
       properties:
         text:
           type: "string"
           description: "用户输入的文本"
-          required: true
         story_content:
           type: "string"
           description: "当前故事内容（摘要）"
-          required: true
     output:
       type: "object"
+      required: ["is_relevant", "should_continue", "need_new_outline", "explanation"]
       properties:
         is_relevant:
           type: "boolean"
           description: "用户输入是否与当前故事相关"
-          required: true
         should_continue:
           type: "boolean"
           description: "是否应该继续讲故事"
-          required: true
         need_new_outline:
           type: "boolean"
           description: "是否需要根据用户输入调整故事大纲"
-          required: true
         explanation:
           type: "string"
           description: "判断理由的简要解释"
-          required: true

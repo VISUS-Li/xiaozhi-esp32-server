@@ -1,15 +1,13 @@
 from config.logger import setup_logging
 import json
-import uuid
 from core.handle.sendAudioHandle import send_stt_message
 from core.storymode.storySession import StorySession
 from core.utils.dialogue import Message
 from loguru import logger
 import asyncio
 from core.prompts import PromptManager
-from core.utils import asr, vad, llm, tts, memory, intent
-from config.module_config import get_module_config
 import re
+from core.storymode.streaming_processor import StreamingTextProcessor
 
 TAG = __name__
 logger = setup_logging()
@@ -145,36 +143,42 @@ async def generate_story_outline(conn, theme_data=None):
             "tts_chunks": []
         }
         
+        # 导入流式处理器
+        
+        # 创建处理器实例
+        processor = StreamingTextProcessor(conn)
+        
         # 调用大模型进行流式生成
-        for text_chunk in _llm.response(conn.session_id, dialogue.get_llm_dialogue()):
-            # 累积大纲内容
-            conn.story_session.outline_cache["content"] += text_chunk
+        llm_responses = _llm.response(conn.session_id, dialogue.get_llm_dialogue())
+        
+        # 处理流式响应的回调函数
+        def on_completion(complete_response):
+            # 更新缓存内容
+            conn.story_session.outline_cache["content"] = complete_response
+            conn.story_session.outline_cache["generating"] = False
+            conn.story_session.outline_cache["completed"] = True
             
-            # 实时生成并播放语音
-            text_index = conn.tts_last_text_index + 1 if hasattr(conn, 'tts_last_text_index') else 0
-            conn.recode_first_last_text(text_chunk, text_index)
+            # 记录助手回复
+            dialogue.put(Message(role="assistant", content=complete_response))
+            conn.dialogue.put(Message(role="assistant", content=complete_response))
             
-            # 生成并播放语音
-            future = conn.executor.submit(conn.speak_and_play, text_chunk, text_index)
-            conn.tts_queue.put(future)
+            # 更新故事阶段为交互阶段
+            conn.story_session.update_stage("story_continuation")
             
-            # 缓存TTS索引
-            conn.story_session.outline_cache["tts_chunks"].append(text_index)
+            # 预先缓存故事续写的第一部分
+            asyncio.create_task(prepare_story_continuation(conn))
         
-        # 记录助手回复
-        full_content = conn.story_session.outline_cache["content"]
-        dialogue.put(Message(role="assistant", content=full_content))
-        conn.dialogue.put(Message(role="assistant", content=full_content))
+        # 使用流式处理器处理
+        result = await processor.process_streaming_text(
+            llm_responses,
+            dialogue_callback=on_completion
+        )
         
-        # 更新缓存状态
-        conn.story_session.outline_cache["generating"] = False
-        conn.story_session.outline_cache["completed"] = True
-        
-        # 更新故事阶段为交互阶段
-        conn.story_session.update_stage("story_continuation")
-        
-        # 预先缓存故事续写的第一部分
-        asyncio.create_task(prepare_story_continuation(conn))
+        # 缓存TTS索引（从处理器内部的记录获取）
+        conn.story_session.outline_cache["tts_chunks"] = list(range(
+            conn.tts_first_text_index, 
+            conn.tts_last_text_index + 1
+        ))
         
     except Exception as e:
         logger.bind(tag=TAG).error(f"生成故事大纲时出错: {str(e)}")
@@ -251,30 +255,34 @@ async def process_user_story_input(conn, text):
         # 构建提示词
         prompt_template = conn.story_session.prompt_manager.get_template(f"story_mode_{current_stage}")
         
-        # 调用大模型进行流式生成
-        response_content = ""
-        for text_chunk in _llm.response(conn.session_id, dialogue.get_llm_dialogue()):
-            response_content += text_chunk
-            
-            # 实时生成并播放语音
-            text_index = conn.tts_last_text_index + 1 if hasattr(conn, 'tts_last_text_index') else 0
-            conn.recode_first_last_text(text_chunk, text_index)
-            
-            # 生成并播放语音
-            future = conn.executor.submit(conn.speak_and_play, text_chunk, text_index)
-            conn.tts_queue.put(future)
+        # 导入流式处理器
+        from core.storymode.streaming_processor import StreamingTextProcessor
         
-        # 记录助手回复
-        dialogue.put(Message(role="assistant", content=response_content))
-        conn.dialogue.put(Message(role="assistant", content=response_content))
+        # 创建处理器实例
+        processor = StreamingTextProcessor(conn)
         
-        # 检查是否退出故事模式
-        if not is_story_mode_active(Message(role="assistant", content=response_content)):
-            conn.in_story_mode = False
-            logger.bind(tag=TAG).info("故事模式结束")
-        else:
-            # 如果继续故事模式，准备下一段续写内容
-            asyncio.create_task(prepare_story_continuation(conn))
+        # 调用大模型获取流式响应
+        llm_responses = _llm.response(conn.session_id, dialogue.get_llm_dialogue())
+        
+        # 处理流式响应的回调函数
+        def on_completion(complete_response):
+            # 记录助手回复
+            dialogue.put(Message(role="assistant", content=complete_response))
+            conn.dialogue.put(Message(role="assistant", content=complete_response))
+            
+            # 检查是否退出故事模式
+            if not is_story_mode_active(Message(role="assistant", content=complete_response)):
+                conn.in_story_mode = False
+                logger.bind(tag=TAG).info("故事模式结束")
+            else:
+                # 如果继续故事模式，准备下一段续写内容
+                asyncio.create_task(prepare_story_continuation(conn))
+        
+        # 使用流式处理器处理
+        await processor.process_streaming_text(
+            llm_responses,
+            dialogue_callback=on_completion
+        )
             
     except Exception as e:
         logger.bind(tag=TAG).error(f"处理用户故事输入时出错: {str(e)}")
@@ -322,7 +330,6 @@ async def prepare_story_continuation(conn):
         # 使用提示词管理器获取续写提示模板
         prompt_manager = conn.story_session.prompt_manager
         prompt_template = prompt_manager.get_template("story_continuation")
-    
         
         # 更新系统提示
         dialogue.update_system_message(prompt_template.formatted_prompt)
@@ -333,31 +340,32 @@ async def prepare_story_continuation(conn):
 
         # 更新用户消息
         dialogue.put(Message(role="user", content=input_prompt))
+
+        llm_responses = _llm.response(conn.session_id, dialogue.get_llm_dialogue())
+
+        # 创建处理器实例
+        processor = StreamingTextProcessor(conn)
         
-        # 调用大模型进行流式生成但不立即播放
-        continuation_content = ""
-        for text_chunk in _llm.response(conn.session_id, dialogue.get_llm_dialogue()):
-            # 累积续写内容
-            continuation_content += text_chunk
+        def on_completion(complete_response):
+            # 更新缓存内容
+            conn.story_session.continuation_cache["content"] = complete_response
+            conn.story_session.continuation_cache["generating"] = False
+            conn.story_session.continuation_cache["completed"] = True
             
-            # 准备TTS但不播放
-            text_index = conn.tts_last_text_index + 1 if hasattr(conn, 'tts_last_text_index') else 0
-            conn.recode_first_last_text(text_chunk, text_index)
+            # 记录助手回复
+            dialogue.put(Message(role="assistant", content=complete_response))
+            conn.dialogue.put(Message(role="assistant", content=complete_response))
             
-            # 仅生成TTS并缓存，不播放
-            tts_future = conn.executor.submit(conn.prepare_audio, text_chunk, text_index)
+            # 更新故事阶段为交互阶段
+            conn.story_session.update_stage("story_continuation")
             
-            # 将TTS索引加入缓存
-            conn.story_session.continuation_cache["tts_chunks"].append(text_index)
+            asyncio.create_task(prepare_story_continuation(conn))
         
-        # 记录助手回复到对话历史，但不显示给用户
-        dialogue.put(Message(role="assistant", content=continuation_content))
-        
-        # 更新缓存内容和状态
-        conn.story_session.continuation_cache["content"] = continuation_content
-        conn.story_session.continuation_cache["generating"] = False
-        conn.story_session.continuation_cache["completed"] = True
-        
+        # 使用流式处理器处理
+        result = await processor.process_streaming_text(
+            llm_responses,
+            dialogue_callback=on_completion
+        )
         logger.bind(tag=TAG).info("故事续写内容已预先缓存")
         
     except Exception as e:
@@ -367,12 +375,11 @@ async def prepare_story_continuation(conn):
             conn.story_session.continuation_cache["generating"] = False
             conn.story_session.continuation_cache["completed"] = False
 
-
 async def extract_story_theme(conn, text):
     """从用户输入中提取故事主题，并结合用户信息"""
     try:
         # 获取内容判断LLM
-        _llm = conn.story_session.get_llm("content_judge")
+        _llm = conn.story_session.get_llm("story_theme_extraction")
         
         # 构建提示词
         user_info = {}
@@ -399,47 +406,35 @@ async def extract_story_theme(conn, text):
             system_prompt=template_data.formatted_prompt,
             user_prompt=input_prompt
         )
+
+        default_theme = {
+            "theme": "一般故事",
+            "age_group": "通用", 
+            "style": "温馨",
+            "has_explicit_theme": False
+        }
         
-        # 解析JSON结果
+        # 解析结果
         try:
             # 尝试使用解析器解析结果
             theme_data = template_data.parse(theme_result)
-            # 如果是Pydantic模型，转换为字典
+            # 如果是Pydantic模型，转换为字符串
             if hasattr(theme_data, "model_dump"):
-                return theme_data.model_dump()
-            return theme_data
+                return json.dumps(theme_data.model_dump(), ensure_ascii=False)
+            return json.dumps(theme_data, ensure_ascii=False)
         except Exception as parse_error:
             logger.bind(tag=TAG).error(f"解析主题数据时出错: {str(parse_error)}")
-            # 如果解析失败，尝试直接解析JSON
-            try:
-                return json.loads(theme_result)
-            except json.JSONDecodeError:
-                # 如果直接解析JSON也失败，尝试提取JSON部分
-                match = re.search(r'\{.*\}', theme_result, re.DOTALL)
-                if match:
-                    theme_json = match.group(0)
-                    try:
-                        return json.loads(theme_json)
-                    except:
-                        pass
+            # 如果解析失败，尝试直接返回原始结果
+            if isinstance(theme_result, str):
+                return theme_result
             
             # 默认返回一般主题
-            return {
-                "theme": "一般故事",
-                "age_group": "通用",
-                "style": "温馨",
-                "has_explicit_theme": False
-            }
+            return json.dumps(default_theme, ensure_ascii=False)
             
     except Exception as e:
         logger.bind(tag=TAG).error(f"提取故事主题时出错: {str(e)}")
         # 返回默认主题
-        return {
-            "theme": "一般故事",
-            "age_group": "通用",
-            "style": "温馨",
-            "has_explicit_theme": False
-        }
+        return json.dumps(default_theme, ensure_ascii=False)
 
 async def judge_user_input_relevance(conn, text):
     """判断用户输入是否与故事的相关性"""
