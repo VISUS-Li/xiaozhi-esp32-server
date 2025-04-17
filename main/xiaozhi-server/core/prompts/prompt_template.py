@@ -1,4 +1,4 @@
-from typing import Dict, Any, Type
+from typing import Dict, Any, Type, List, Optional
 import json
 from config.logger import setup_logging
 
@@ -20,38 +20,96 @@ def _get_field_type(type_str: str) -> Type:
     }
     return type_map.get(type_str, str)
 
-# 用以验证大模型返回的结果是否符合要求
-def _create_model_from_schema(schema: Dict[str, Any], output: bool) -> Type[BaseModel] | None | Any:
-    """从JSON Schema创建Pydantic模型"""
-    # 如果schema包含input和output区分，则只使用output部分创建模型
+def _create_model_from_schema(
+    schema: Optional[Dict[str, Any]], 
+    output: bool = True
+) -> Optional[Type[BaseModel]]:
+    """从JSON Schema创建Pydantic模型，支持递归解析嵌套结构
+    
+    Args:
+        schema: JSON Schema定义
+        output: 是否处理output部分，True处理output，False处理input
+        
+    Returns:
+        创建的Pydantic模型类，如果无法创建则返回None
+    """
+    # 检查schema是否为None
     if schema is None:
         return None
+    
+    # 根据output参数确定处理的schema部分
+    schema_part = None
     if "output" in schema and output:
-        properties = schema.get("output", {}).get("properties", {})
+        schema_part = schema.get("output", {})
     elif "input" in schema and not output:
-        properties = schema.get("input", {}).get("properties", {})
+        schema_part = schema.get("input", {})
     else:
-        properties = schema.get("properties", {})
-    if properties is None:
+        schema_part = schema
+    
+    if schema_part is None or not isinstance(schema_part, dict):
         return None
     
+    # 获取properties和required字段
+    properties = schema_part.get("properties", {})
+    if not properties:
+        return None
+    
+    required_fields = schema_part.get("required", [])
+    
+
+    model_name = schema_part.get("title", schema.get("title", f"DynamicModel_{id(schema)}"))
+    
+    # 处理所有字段
     fields = {}
-
     for field_name, field_schema in properties.items():
-        field_type = _get_field_type(field_schema.get("type", "string"))
-        is_required = field_schema.get("required", False)
-
-        # 使用Pydantic的Field创建字段，包含描述和必填标记
+        # 获取默认值和描述
+        is_required = field_name in required_fields
         field_default = ... if is_required else None
         field_description = field_schema.get("description", "")
-
+        
+        # 获取字段类型并处理特殊类型
+        field_type = _process_field_type(field_schema)
+        
+        # 添加到字段字典
         fields[field_name] = (
             field_type,
             Field(default=field_default, description=field_description)
         )
-
-    model_name = schema.get("title", "DynamicModel")        
+    
+    # 创建并返回模型
     return create_model(model_name, **fields)
+def _process_field_type(field_schema: Dict[str, Any]) -> Type:
+    """处理单个字段的类型，支持嵌套对象和数组
+    
+    Args:
+        field_schema: 字段的schema定义
+        
+    Returns:
+        字段的Python类型
+    """
+    field_type = _get_field_type(field_schema.get("type", "string"))
+    
+    # 处理嵌套对象
+    if field_type == dict and "properties" in field_schema:
+        # 使用唯一名称避免命名冲突
+        # 递归创建嵌套模型
+        nested_model = _create_model_from_schema(field_schema, True)
+        field_type = nested_model if nested_model else dict
+    
+    # 处理数组类型
+    elif field_type == list and "items" in field_schema:
+        items_schema = field_schema.get("items", {})
+        # 处理数组元素
+        item_type = _get_field_type(items_schema.get("type", "string"))
+        if item_type == dict and "properties" in items_schema:
+            # 为数组元素创建模型
+            item_model = _create_model_from_schema(items_schema, True)
+            field_type = List[item_model] if item_model else List[dict]
+        else:
+            # 处理基本类型的数组
+            field_type = List[item_type]
+    
+    return field_type
 
 
 class PromptTemplate:
@@ -101,9 +159,16 @@ class PromptTemplate:
         if not self.schema:
             return ""
         
-        # 创建用于展示的schema
-        # display_schema = self._create_display_schema()
-        schema_str = json.dumps(self.schema, ensure_ascii=False, indent=2)
+        # 只提取output部分的schema
+        output_schema = {}
+        if "output" in self.schema:
+            # 如果schema中有output字段，就只使用output部分
+            output_schema = self.schema.get("output", {})
+        else:
+            # 如果没有明确的output字段，则假设整个schema就是输出结构
+            output_schema = self.schema
+        
+        schema_str = json.dumps(output_schema, ensure_ascii=False, indent=2)
         
         return f"""你的响应必须是一个符合以下JSON Schema的JSON对象，注意在required列表中的字段是必须填有意义的内容，不能填写空值或未知等内容:
 ```json
@@ -149,34 +214,81 @@ class PromptTemplate:
         except Exception as e:
             raise ValueError(f"输入值验证失败: {str(e)}")
 
-    def parse(self, text: str) -> Any:
-        """从文本中解析JSON对象"""
-        try:
-            # 尝试提取JSON部分
-            start_idx = text.find('{')
-            end_idx = text.rfind('}')
+    def parse(self, text: str, validate_required: bool = False) -> Any:
+        """从文本中解析JSON对象
+        
+        Args:
+            text: 包含JSON数据的文本
+            validate_required: 是否验证required字段，True则验证失败时抛出异常
             
-            if 0 <= start_idx < end_idx:
-                json_str = text[start_idx:end_idx+1]
-                data = json.loads(json_str)
+        Returns:
+            解析后的对象，如果有schema模型则返回模型实例，否则返回AttrDict
+        
+        Raises:
+            ValueError: 当JSON解析失败时或当validate_required=True且必填字段缺失时
+        """
+        try:
+            # 使用正则表达式查找最完整的JSON对象
+            import re
+            json_objects = re.finditer(r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}', text)
+            all_matches = list(json_objects)
+            
+            if not all_matches:
+                # 如果没有找到JSON对象，则尝试从文本中提取 {}之间的内容
+                logger.bind(tag=TAG).debug("未找到复杂JSON对象，尝试寻找简单JSON对象")
+                start_idx = text.find('{') 
+                end_idx = text.rfind('}')
                 
-                if self.output_schema_model is not None:
+                if 0 <= start_idx < end_idx:
+                    json_str = text[start_idx:end_idx+1]
                     try:
-                        # 尝试使用Pydantic模型验证
-                        return self.output_schema_model(**data)
-                    except Exception as e:
-                        logger.bind(tag=TAG).warning(f"Pydantic模型验证失败，将使用自定义对象访问模式: {str(e)}")
-                        return AttrDict(data)
+                        data = json.loads(json_str)
+                    except:
+                        raise ValueError("JSON解析失败")
                 else:
-                    # 如果没有模型，则返回带属性访问的字典
+                    raise ValueError("未找到JSON对象")
+            else:
+                # 首先尝试最长匹配，通常是最完整的JSON
+                try:
+                    longest_match = max(all_matches, key=lambda m: len(m.group(0)))
+                    json_str = longest_match.group(0)
+                    data = json.loads(json_str)
+                except (json.JSONDecodeError, ValueError):
+                    # 如果解析失败，尝试其他匹配
+                    for match in reversed(all_matches):  # 从后向前，通常后面的更完整
+                        try:
+                            json_str = match.group(0)
+                            data = json.loads(json_str)
+                            break
+                        except (json.JSONDecodeError, ValueError):
+                            continue
+                    else:  # 如果所有匹配都解析失败
+                        raise ValueError("所有找到的JSON都解析失败")
+            
+            # 使用schema模型验证解析结果
+            if self.output_schema_model is not None:
+                try:
+                    # 尝试使用Pydantic模型验证
+                    model_instance = self.output_schema_model(**data)
+                    logger.bind(tag=TAG).debug(f"成功解析并验证JSON对象为 {self.output_schema_model.__name__} 类型")
+                    return model_instance
+                except Exception as e:
+                    logger.bind(tag=TAG).warning(f"Pydantic模型验证失败: {str(e)}")
+                    # 如果需要验证required字段，则在验证失败时抛出异常
+                    if validate_required:
+                        raise ValueError(f"JSON数据验证失败，缺少必填字段或字段类型不匹配: {str(e)}")
+                    # 否则退回到兼容模式，返回AttrDict
                     return AttrDict(data)
             else:
-                raise ValueError("未找到JSON对象")
+                # 没有模型，使用AttrDict提供属性访问
+                return AttrDict(data)
+                
         except Exception as e:
             logger.bind(tag=TAG).error(f"解析JSON输出时出错: {str(e)}")
-            raise
+            raise ValueError(f"JSON解析失败: {str(e)}")
 
-# 添加一个辅助类，允许同时以属性和字典方式访问数据
+
+# 重构AttrDict类，改进嵌套字典和列表的处理
 class AttrDict(dict):
     """允许通过属性访问的字典类"""
     def __init__(self, *args, **kwargs):
@@ -188,12 +300,28 @@ class AttrDict(dict):
             if isinstance(value, dict):
                 self[key] = AttrDict(value)
             elif isinstance(value, list):
-                self[key] = [
-                    AttrDict(item) if isinstance(item, dict) else item
-                    for item in value
-                ]
+                self[key] = self._process_list(value)
+    
+    def _process_list(self, lst):
+        """递归处理列表中的字典和嵌套列表"""
+        result = []
+        for item in lst:
+            if isinstance(item, dict):
+                result.append(AttrDict(item))
+            elif isinstance(item, list):
+                result.append(self._process_list(item))
+            else:
+                result.append(item)
+        return result
     
     # 提供属性访问的兜底方法
     def __getattr__(self, name):
         # 尝试从字典获取，如果不存在则返回None而不是抛出异常
         return self.get(name)
+    
+    # 增加字符串表示方法，方便调试
+    def __str__(self):
+        return f"AttrDict({super().__str__()})"
+    
+    def __repr__(self):
+        return self.__str__()

@@ -76,7 +76,7 @@ story_continuation:
           description: "故事分段，是一个数组，包含了故事的每一句话"
           items:
             type: "object"
-            required: ["is_role", "content",]
+            required: ["is_role", "content", "sort"]
             properties:
               is_role:
                 type: "boolean"
@@ -92,7 +92,7 @@ story_continuation:
                 description: "句子内容，如果是角色说的话只包含话语内容，不含情绪动作描述"
               sort:
                 type: "integer"
-                description: "顺序，该句子在文字转语音时播放的顺序，确保故事连贯性"
+                description: "顺序，该句子在文字转语音时播放的顺序，确保故事连贯性，顺序在整个故事的创作中是唯一且有序的，顺序从0开始"
               mood:
                 type: "string"
                 description: "角色说话的情绪和动作描述，仅当content是角色对话时有效"

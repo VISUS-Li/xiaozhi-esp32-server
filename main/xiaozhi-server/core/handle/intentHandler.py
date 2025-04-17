@@ -19,12 +19,7 @@ async def handle_user_intent(conn, text):
     # 检查是否是唤醒词
     if await checkWakeupWords(conn, text):
         return True
-        
-    # 检查是否已在故事模式或需要进入故事模式
-    if hasattr(conn, 'in_story_mode') and conn.in_story_mode:
-        # 已经在故事模式中，交给故事模式处理器
-        return await handle_story_mode(conn, text)
-    
+
     # 检查是否包含故事模式触发关键词
     if await check_story_mode_keywords(conn, text):
         # 包含故事模式关键词，进入故事模式
