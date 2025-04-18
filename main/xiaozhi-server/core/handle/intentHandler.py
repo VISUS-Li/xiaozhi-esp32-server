@@ -21,7 +21,7 @@ async def handle_user_intent(conn, text):
         return True
 
     # 检查是否包含故事模式触发关键词
-    if await check_story_mode_keywords(conn, text):
+    if await check_story_mode_keywords(text):
         # 包含故事模式关键词，进入故事模式
         return await handle_story_mode(conn, text)
 

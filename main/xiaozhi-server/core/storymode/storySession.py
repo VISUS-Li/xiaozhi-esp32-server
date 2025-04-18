@@ -14,7 +14,8 @@ class StorySession:
         self.stage = "init"  # 初始阶段
         self.prompt_manager = PromptManager()
         self.dialogue_history = {}  # 为不同阶段存储对话历史
-        
+        self.outline_cache = {}
+
         # 初始化不同阶段所需的 LLM 实例
         self._init_llm_instances()
         
@@ -102,3 +103,4 @@ class StorySession:
         """更新当前阶段"""
         self.stage = new_stage
         return self.stage
+        
