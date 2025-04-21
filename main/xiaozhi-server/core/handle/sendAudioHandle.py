@@ -17,7 +17,8 @@ async def sendAudioMessage(conn, audios, text, text_index=0):
         logger.bind(tag=TAG).info(f"发送第一段语音: {text}")
     await send_tts_message(conn, "sentence_start", text)
 
-    # 播放音频
+    logger.bind(tag=TAG).info(f"【发送语音】: {text}")
+    # 发送语音
     await sendAudio(conn, audios)
 
     await send_tts_message(conn, "sentence_end", text)

@@ -64,20 +64,33 @@ def _create_model_from_schema(
     for field_name, field_schema in properties.items():
         # 获取默认值和描述
         is_required = field_name in required_fields
-        field_default = ... if is_required else None
+        # 非必需字段明确设置为可接受None值，对于字符串类型的字段也允许None
+        if is_required:
+            field_default = ...
+        else:
+            # 对于非必需字段，明确设置默认值为None并允许接受None值
+            field_default = None
         field_description = field_schema.get("description", "")
         
         # 获取字段类型并处理特殊类型
         field_type = _process_field_type(field_schema)
         
-        # 添加到字段字典
-        fields[field_name] = (
-            field_type,
-            Field(default=field_default, description=field_description)
-        )
+        # 添加到字段字典，对于非必需字段设置allow_none=True
+        if is_required:
+            fields[field_name] = (
+                field_type,
+                Field(default=field_default, description=field_description)
+            )
+        else:
+            # 允许非必需字段为None值
+            fields[field_name] = (
+                Optional[field_type],
+                Field(default=field_default, description=field_description)
+            )
     
     # 创建并返回模型
     return create_model(model_name, **fields)
+
 def _process_field_type(field_schema: Dict[str, Any]) -> Type:
     """处理单个字段的类型，支持嵌套对象和数组
     
@@ -218,7 +231,7 @@ class PromptTemplate:
         """从文本中解析JSON对象
         
         Args:
-            text: 包含JSON数据的文本
+            text: 包含JSON数据的文本或纯JSON字符串
             validate_required: 是否验证required字段，True则验证失败时抛出异常
             
         Returns:
@@ -228,42 +241,56 @@ class PromptTemplate:
             ValueError: 当JSON解析失败时或当validate_required=True且必填字段缺失时
         """
         try:
-            # 使用正则表达式查找最完整的JSON对象
-            import re
-            json_objects = re.finditer(r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}', text)
-            all_matches = list(json_objects)
-            
-            if not all_matches:
-                # 如果没有找到JSON对象，则尝试从文本中提取 {}之间的内容
-                logger.bind(tag=TAG).debug("未找到复杂JSON对象，尝试寻找简单JSON对象")
-                start_idx = text.find('{') 
+            # 首先尝试直接解析，处理纯JSON字符串的情况
+            try:
+                data = json.loads(text)
+                logger.bind(tag=TAG).debug("成功直接解析JSON字符串")
+            except json.JSONDecodeError:
+                # 如果直接解析失败，尝试从文本中提取JSON对象
+                logger.bind(tag=TAG).debug("直接解析失败，尝试从文本中提取JSON")
+                
+                # 尝试寻找最外层的花括号对
+                start_idx = text.find('{')
                 end_idx = text.rfind('}')
                 
                 if 0 <= start_idx < end_idx:
                     json_str = text[start_idx:end_idx+1]
                     try:
                         data = json.loads(json_str)
-                    except:
-                        raise ValueError("JSON解析失败")
-                else:
-                    raise ValueError("未找到JSON对象")
-            else:
-                # 首先尝试最长匹配，通常是最完整的JSON
-                try:
-                    longest_match = max(all_matches, key=lambda m: len(m.group(0)))
-                    json_str = longest_match.group(0)
-                    data = json.loads(json_str)
-                except (json.JSONDecodeError, ValueError):
-                    # 如果解析失败，尝试其他匹配
-                    for match in reversed(all_matches):  # 从后向前，通常后面的更完整
+                        logger.bind(tag=TAG).debug("成功通过简单提取解析JSON")
+                    except json.JSONDecodeError:
+                        # 如果简单提取失败，使用正则表达式进行更复杂的匹配
+                        logger.bind(tag=TAG).debug("简单提取解析失败，尝试正则匹配")
+                        import re
+                        # 匹配可能包含嵌套结构的JSON对象
+                        json_pattern = re.compile(r'\{(?:[^{}]|(?:\{(?:[^{}]|(?:\{[^{}]*\}))*\}))*\}')
+                        matches = list(json_pattern.finditer(text))
+                        
+                        if not matches:
+                            raise ValueError("未找到有效的JSON对象")
+                        
+                        # 优先选择最长匹配，通常是最完整的JSON
+                        longest_match = max(matches, key=lambda m: len(m.group(0)))
+                        json_str = longest_match.group(0)
                         try:
-                            json_str = match.group(0)
                             data = json.loads(json_str)
-                            break
-                        except (json.JSONDecodeError, ValueError):
-                            continue
-                    else:  # 如果所有匹配都解析失败
-                        raise ValueError("所有找到的JSON都解析失败")
+                            logger.bind(tag=TAG).debug("成功通过正则匹配解析JSON")
+                        except json.JSONDecodeError:
+                            # 尝试其他可能的匹配
+                            for match in sorted(matches, key=lambda m: len(m.group(0)), reverse=True):
+                                if match == longest_match:
+                                    continue
+                                try:
+                                    json_str = match.group(0)
+                                    data = json.loads(json_str)
+                                    logger.bind(tag=TAG).debug("成功通过备选正则匹配解析JSON")
+                                    break
+                                except json.JSONDecodeError:
+                                    continue
+                            else:
+                                raise ValueError("所有可能的JSON匹配都解析失败")
+                else:
+                    raise ValueError("文本中未找到JSON对象的起始和结束标记")
             
             # 使用schema模型验证解析结果
             if self.output_schema_model is not None:

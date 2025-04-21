@@ -20,11 +20,8 @@ voices:
     - name: "戏剧旁白"
       description: "富有戏剧性的旁白音色"
       tts:
-        type: fishspeech
-        reference_id: null
-        reference_audio: ["tmp/leijun.mp3"]
-        reference_text: ["大家好！今天给大家带来一款重磅产品，性能提升了80%，但是价格只要友商的一半。这不仅仅是一个产品，更是一个精品。让我问问大家，这个价格，你们觉得怎么样？are you OK？"]
-  
+        type: edge
+        voice: zh-CN-YunxiNeural
   # 角色音色配置
   characters:
     - name: "女性-年轻"
@@ -59,9 +56,8 @@ voices:
       description: "带有台湾口音的女性音色"
       gender: "female"
       tts:
-        type: fishspeech
-        reference_audio: ["tmp/nailong.mp3"]
-        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
+        type: edge
+        voice: zh-TW-HsiaoYuNeural
     
     - name: "机器人"
       description: "带有电子感的机器人音色"
@@ -69,7 +65,6 @@ voices:
       tts:
         type: edge
         voice: zh-CN-YunxiNeural
-        # 可以添加特殊处理参数
         processing:
           pitch: -5
           rate: 0.9
@@ -78,9 +73,8 @@ voices:
       description: "年长者特征的音色"
       gender: "male"
       tts:
-        type: fishspeech
-        reference_audio: ["tmp/cxk.mp3"]
-        reference_text: ["大家好，最近一直在练习室准备新歌，每天都在追求更好的表现。感谢粉丝们一直以来的支持"]
+        type: edge
+        voice: zh-CN-YunyangNeural
     
     - name: "儿童"
       description: "儿童特征的音色"
@@ -97,23 +91,20 @@ voices:
     - name: "动物-猫"
       description: "猫的拟人化音色"
       tts:
-        type: fishspeech
-        reference_audio: ["tmp/nailong.mp3"]
-        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
+        type: edge
+        voice: zh-CN-XiaoxiaoNeural
     
     - name: "动物-狗"
       description: "狗的拟人化音色"
       tts:
-        type: fishspeech
-        reference_audio: ["tmp/cxk.mp3"]
-        reference_text: ["大家好，最近一直在练习室准备新歌，每天都在追求更好的表现。感谢粉丝们一直以来的支持"]
+        type: edge
+        voice: zh-CN-YunyangNeural
     
     - name: "自然元素-风"
       description: "风的拟人化音色"
       tts:
-        type: fishspeech
-        reference_audio: ["tmp/nailong.mp3"]
-        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
+        type: edge
+        voice: zh-CN-YunxiNeural
 
 # 交互配置
 interaction:

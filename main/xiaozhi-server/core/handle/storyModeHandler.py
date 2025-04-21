@@ -91,6 +91,7 @@ async def save_llm_response_to_file(conn, stage, prompt, user_prompt, response):
     """将LLM响应保存到文件
     
     Args:
+        conn: 连接对象，包含session_id
         stage: 当前阶段名称
         prompt: 提示词模板的格式化内容
         user_prompt: 用户提供的提示内容
@@ -104,27 +105,91 @@ async def save_llm_response_to_file(conn, stage, prompt, user_prompt, response):
         log_dir = os.path.join("logs", "llm_responses")
         os.makedirs(log_dir, exist_ok=True)
         
-        # 生成文件名，包含时间戳和阶段信息
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{stage}.json"
-        filepath = os.path.join(log_dir, filename)
+        # 获取session_id
+        session_id = conn.session_id
         
-        template = conn.story_session.prompt_manager.get_template(stage)
-        resp_json = template.parse(response, True)
+        # 使用session_id和stage命名文件
+        filename = f"{session_id}_{stage}.json"
+        filepath = os.path.join(log_dir, filename)
+
+        # 处理response对象，确保能够正确序列化为JSON
+        if hasattr(response, 'model_dump'):
+            # 如果是Pydantic模型，使用model_dump()方法转为字典
+            resp_dict = response.model_dump()
+        elif isinstance(response, dict):
+            # 如果是AttrDict或普通字典，转换为标准字典
+            resp_dict = dict(response)
+        elif isinstance(response, str):
+            # 如果是字符串，尝试解析为JSON对象
+            try:
+                resp_dict = json.loads(response)
+            except json.JSONDecodeError:
+                # 如果不是有效的JSON字符串，则保留原始字符串
+                resp_dict = response
+        else:
+            # 其他类型尝试直接转换
+            resp_dict = str(response)
+        
+        # 处理user_prompt对象，确保正确序列化为JSON
+        if user_prompt and isinstance(user_prompt, str):
+            # 如果是字符串，尝试解析为JSON对象
+            try:
+                user_prompt = json.loads(user_prompt)
+            except json.JSONDecodeError:
+                # 如果不是有效的JSON字符串，保留原始值
+                pass
+
+        # 新增：递归解析 user_prompt 中 before 列表的 content 字段和 outline 字段
+        if isinstance(user_prompt, dict):
+            # 解析 before 列表中的 content
+            if "before" in user_prompt and isinstance(user_prompt["before"], list):
+                for item in user_prompt["before"]:
+                    if isinstance(item, dict) and "content" in item and isinstance(item["content"], str):
+                        try:
+                            item["content"] = json.loads(item["content"])
+                        except Exception:
+                            pass
+            # 解析 outline 字段
+            if "outline" in user_prompt and isinstance(user_prompt["outline"], str):
+                try:
+                    user_prompt["outline"] = json.loads(user_prompt["outline"])
+                except Exception:
+                    pass
+        # 生成当前记录的时间戳
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        
         # 构建保存内容
         save_data = {
             "timestamp": timestamp,
             "stage": stage,
             "system_prompt": prompt,
             "user_prompt": user_prompt,
-            "response": resp_json
+            "response": resp_dict
         }
         
-        # 写入文件
+        # 检查文件是否已存在
+        file_data = []
+        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+            try:
+                # 读取现有文件内容
+                with open(filepath, "r", encoding="utf-8") as f:
+                    file_data = json.load(f)
+                    # 确保file_data是列表
+                    if not isinstance(file_data, list):
+                        file_data = [file_data]
+            except json.JSONDecodeError:
+                # 如果文件格式不正确，创建新文件
+                logger.bind(tag=TAG).warning(f"文件 {filepath} 格式不正确，将创建新文件")
+                file_data = []
+        
+        # 将新数据添加到列表中
+        file_data.append(save_data)
+        
+        # 写入文件（覆盖原有内容）
         with open(filepath, "w", encoding="utf-8") as f:
-            json.dump(save_data, f, ensure_ascii=False, indent=2)
+            json.dump(file_data, f, ensure_ascii=False, indent=2)
             
-        logger.bind(tag=TAG).info(f"已保存LLM响应到文件: {filepath}")
+        logger.bind(tag=TAG).debug(f"已将LLM响应追加到文件: {filepath}")
         return filename
     
     except Exception as e:
@@ -174,16 +239,28 @@ async def call_llm_with_template(conn, stage, user_prompt):
             user_prompt
         )
         
+        story_data = prompt_template.parse(complete_response, True)
+        if isinstance(story_data, str):
+            pass
+        elif hasattr(story_data, 'model_dump_json'):
+            # Pydantic模型
+            story_data = story_data.model_dump_json()
+        elif isinstance(story_data, dict):
+            # 字典类型
+            story_data = json.dumps(story_data, ensure_ascii=False)
+        else:
+            # 其他类型转字符串
+            story_data = str(story_data)
         # 保存LLM响应到文件
         await save_llm_response_to_file(
             conn,
             stage, 
             prompt_template.formatted_prompt, 
             user_prompt, 
-            complete_response
+            story_data
         )
         
-        return complete_response, prompt_template
+        return story_data, prompt_template
     
     except Exception as e:
         logger.bind(tag=TAG).error(f"调用LLM时出错 (阶段:{stage}): {str(e)}")
@@ -283,15 +360,39 @@ async def check_story_mode_keywords(text):
     return False 
 
 
-async def check_story_ending(complete_response, prompt_template):
-    """检查故事是否结束"""
+async def get_next_sort(complete_response, prompt_template):
+    """检查故事是否结束，并获取下一个sort值"""
     try:
-        story_data = prompt_template.parse(complete_response)
-        return getattr(story_data, "ended", False)
+        story_data = prompt_template.parse(complete_response, True)
+        
+        # 默认故事未结束和下一个sort为0
+        story_ended = False
+        next_sort = 0
+        
+        # 从story_data获取ended属性
+        if hasattr(story_data, "ended"):
+            story_ended = story_data.ended
+        
+        # 从story_seg中查找最大的sort值
+        if hasattr(story_data, "story_seg") and story_data.story_seg:
+            # 初始化最大sort值
+            max_sort = -1
+            
+            # 遍历story_seg数组查找最大sort值
+            for seg in story_data.story_seg:
+                if hasattr(seg, "sort"):
+                    max_sort = max(max_sort, seg.sort)
+                elif isinstance(seg, dict) and "sort" in seg:
+                    max_sort = max(max_sort, seg["sort"])
+            
+            # 如果找到了有效的sort值，则next_sort为max_sort+1
+            if max_sort >= 0:
+                next_sort = max_sort + 1
+        
+        return story_ended, next_sort
     except Exception as e:
-        logger.bind(tag=TAG).error(f"检查故事结束状态时出错: {e}")
-        return False
-
+        logger.bind(tag=TAG).error(f"获取next_sort时出错: {str(e)}")
+        return getattr(complete_response, "ended", False), getattr(complete_response, "next_sort", 0)
 
 async def prepare_story_continuation(conn):
     """预先准备故事续写内容 - 使用非流式方式"""
@@ -306,6 +407,7 @@ async def prepare_story_continuation(conn):
         user_prompt = {
             "outline": conn.story_session.outline_cache,
             "before": before,
+            "next_sort": conn.story_session.next_sort
         }
         
         # 调用LLM生成内容
@@ -316,7 +418,8 @@ async def prepare_story_continuation(conn):
         dialogue.put(Message(role="assistant", content=complete_response))
         
         # 检查故事是否结束
-        story_ended = await check_story_ending(complete_response, prompt_template)
+        story_ended, next_sort = await get_next_sort(complete_response, prompt_template)
+        conn.story_session.next_sort = next_sort
         
         # 获取下一个安全的文本索引
         next_text_index = await conn.story_session.incr_stage_index()

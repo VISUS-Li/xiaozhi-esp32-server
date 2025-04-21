@@ -81,9 +81,9 @@ class StoryRespProcessor:
         # 已使用的声音列表，用于避免角色和旁白声音重复
         self.used_voices = set()
 
-        threading.Thread(target=self._run_audio_sequencer, daemon=True).start()
+        # threading.Thread(target=self._run_audio_sequencer, daemon=True).start()
     
-    async def _process_text_segment(self, text, text_index):
+    def _process_text_segment(self, text, text_index):
         """处理单个文本段"""
         if hasattr(self.conn, 'recode_first_last_text'):
             self.conn.recode_first_last_text(text, text_index)
@@ -95,7 +95,7 @@ class StoryRespProcessor:
         self.custom_speak_and_play(text, text_index, tts_config)
 
 
-    async def _process_json_content(self, stage, text, stage_index):
+    def _process_json_content_thread(self, stage, text, stage_index):
         """处理llm的输出内容，根据不同的阶段调用不同的处理方法
         
         Args:
@@ -111,12 +111,16 @@ class StoryRespProcessor:
             return False
         try:
             # 直接使用模板的parse方法解析JSON文本，使用validate_required=True验证必填字段
-            parsed_data = template.parse(text, validate_required=True)
+            try:
+                parsed_data = template.parse(text, validate_required=True)
+            except Exception as e:
+                parsed_data = text
             # 根据当前阶段调用相应的处理方法
             if stage == "story_continuation":
-                await self._process_story_continuation(parsed_data, stage_index)
+                # 将故事续写处理放入线程中异步执行
+                self._process_story_continuation(parsed_data, stage_index)
             elif stage == "outline_generation":
-                await self._process_story_outline(parsed_data, stage_index)
+                self._process_story_outline(parsed_data, stage_index)
             else:
                 # 对于其他JSON内容，尝试转换为字符串处理
                 # 这是一个后备处理方式
@@ -128,7 +132,7 @@ class StoryRespProcessor:
                     
                     segment_text = get_string_no_punctuation_or_emoji(text)
                     if segment_text:
-                        await self._process_text_segment(segment_text, stage_index)
+                        self._process_text_segment(segment_text, stage_index)
                 except:
                     logger.bind(tag=TAG).error("无法将解析的数据转换为文本")
             
@@ -138,20 +142,23 @@ class StoryRespProcessor:
             logger.bind(tag=TAG).error(f"处理JSON内容时出错: {e}")
             return False
     
-    async def _process_story_continuation(self, story_data, stage_index):
-        """处理故事续写阶段的JSON内容"""
+    def _process_story_continuation(self, story_data, stage_index):
+        """在线程中处理故事续写阶段的JSON内容"""
         try:
-            # 直接使用已经解析的故事数据
-            # 检查是否有story_seg字段
             story_seg = story_data.story_seg
-            # 处理故事片段
+            # 新增：设置seg总数
+            self.conn.story_session.set_stage_seg_count(stage_index, len(story_seg))
             for i, segment in enumerate(story_seg):
+                sort = segment.sort
+                logger.bind(tag=TAG).debug(f"处理故事片段,stage_index: {stage_index}, sort: {sort}, segment: {segment}")
                 if segment.is_role:
                     # 处理角色对话
-                    await self._process_role_dialogue(segment, stage_index, i)
+                    self._process_role_dialogue(segment, stage_index, i)
                 else:
                     # 处理旁白
-                    await self._process_narrator(segment.content, stage_index, i)
+                    sort = segment.sort
+                    full_text = f"{sort} {segment.content}"
+                    self._process_narrator(full_text, stage_index, i)
         
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理故事续写数据时出错: {e}")
@@ -160,15 +167,16 @@ class StoryRespProcessor:
                 logger.bind(tag=TAG).debug(f"故事数据: {story_data}")
             except:
                 pass
-    
-    async def _process_role_dialogue(self, segment, stage_index, seg_index):
-        """处理角色对话"""
+
+    def _process_role_dialogue(self, segment, stage_index, seg_index):
+        """同步处理角色对话（在线程中调用）"""
         try:
             # 支持两种访问方式
             role_name = segment.role_name
             content = segment.content
             mood = segment.mood
             mood_location = segment.mood_location
+            sort = segment.sort
             
             # 获取性别，用于选择合适的语音
             role_gender = segment.role_gender
@@ -182,6 +190,10 @@ class StoryRespProcessor:
                 full_text = f"{role_name}说道：{content}{mood}"
             else:
                 full_text = f"{role_name}说道：{content}"
+            
+            # 将sort转换为字符串，避免类型错误
+            if sort is not None:
+                full_text = f"{str(sort)}{full_text}"
             
             # 获取角色的语音配置
             tts_config = self._get_role_voice(role_name, role_gender)
@@ -197,9 +209,9 @@ class StoryRespProcessor:
                 logger.bind(tag=TAG).debug(f"段落内容: {segment}")
             except:
                 pass
-    
-    async def _process_narrator(self, content, stage_index, seg_index):
-        """处理旁白"""
+
+    def _process_narrator(self, content, stage_index, seg_index):
+        """同步处理旁白（在线程中调用）"""
         try:                        
             # 获取旁白的语音配置
             tts_config = self._get_narrator_voice()
@@ -337,97 +349,116 @@ class StoryRespProcessor:
         # 返回合并后的配置
         return merged_config
 
-    def _run_audio_sequencer(self):
-        """后台线程，用于按顺序处理生成的音频文件"""
+    # def _run_audio_sequencer(self):
+    #     """后台线程，用于按顺序处理生成的音频文件"""
+    #     try:
+    #         while True:
+    #             with self.conn.story_session.tts_stage_dict_lock:
+    #                 stage_key = str(self.conn.story_session.next_play_index)
+    #                 seg_list = self.conn.story_session.tts_stage_dict.get(stage_key)
+    #                 seg_count = self.conn.story_session.tts_stage_seg_count.get(stage_key)
+    #                 # 只有seg_list数量等于seg_count时才处理
+    #                 if seg_list and seg_count is not None and len(seg_list) == seg_count:
+    #                     seg_list_sorted = sorted(seg_list, key=lambda x: x.get('text_index', 0))
+    #                     for seg in seg_list_sorted:
+    #                         text_index, audio_file, text = seg.get('text_index'), seg.get('audio_file'), seg.get('text')
+    #                         cur_text_index = self.conn.story_session.incr_text_index()
+    #                         completed_future = Future()
+    #                         completed_future.set_result((audio_file, text, cur_text_index))
+    #                         self.conn.recode_first_last_text(text, cur_text_index)
+    #                         self.conn.tts_queue.put(completed_future)
+    #                         logger.bind(tag=TAG).warning(f"顺序播放器: 已将索引 {cur_text_index} 的音频加入播放队列 : {text}")
+    #                     # put、清理、next_play_index++ 必须在锁内原子完成
+    #                     self.conn.story_session.tts_stage_dict.pop(stage_key, None)
+    #                     self.conn.story_session.tts_stage_seg_count.pop(stage_key, None)
+    #                     self.conn.story_session.next_play_index += 1
+    #             time.sleep(0.05)
+    #     except Exception as e:
+    #         logger.bind(tag=TAG).error(f"顺序播放器线程出错: {e}")
+
+    def custom_speak_and_play(self, _text, _stage_index, _seg_index, _tts_config):
+        """在独立线程中执行的TTS生成和处理函数"""
         try:
-            while True:
-                # 检查下一个要播放的音频是否已经准备好
-                stage_key = str(self.conn.story_session.next_play_index)
-                if stage_key in self.conn.story_session.tts_stage_dict:
-                    # 获取音频信息
-                    seg_list = self.conn.story_session.tts_stage_dict.pop(stage_key)
-                    for seg in seg_list:
-                        text_index, audio_file, text = seg.get('text_index'), seg.get('audio_file'), seg.get('text')
-                        cur_text_index = self.conn.story_session.incr_text_index()
+            logger.bind(tag=TAG).debug(f"线程开始处理TTS: {_text[:30]}...")
 
-                        # 创建一个已完成的Future对象
-                        completed_future = Future()
-                        completed_future.set_result((audio_file, text, cur_text_index))
+            if not _tts_config:
+                _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
+                self._put_audio_to_queue_in_order(_stage_index, _seg_index, _audio_file, _text)
+                return
 
-                        self.conn.recode_first_last_text(text, cur_text_index)
-                        # 将音频放入播放队列
-                        self.conn.tts_queue.put(completed_future)
-                        logger.bind(tag=TAG).warning(f"顺序播放器: 已将索引 {cur_text_index} 的音频加入播放队列 : {text}")
+            tts_type = _tts_config.get("type")
+            if not tts_type:
+                _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
+                self._put_audio_to_queue_in_order(_stage_index, _seg_index, _audio_file, _text)
+                return
 
-                    # 更新下一个要播放的索引
-                    self.conn.story_session.next_play_index += 1
-                else:
-                    # 如果下一个要播放的音频尚未准备好，短暂等待
-                    time.sleep(0.1)
+            merged_config = self._get_merged_tts_config(_tts_config)
+            tts_instance = tts.create_instance(
+                tts_type,
+                merged_config,
+                self.conn.config["delete_audio"]
+            )
+
+            if not tts_instance:
+                logger.bind(tag=TAG).info("创建自定义TTS失败，使用默认方法")
+                _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
+                self._put_audio_to_queue_in_order(_stage_index, _seg_index, _audio_file, _text)
+                return
+
+            _audio_file = tts_instance.to_tts(_text)
+            if not _audio_file:
+                _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
+
+            logger.bind(tag=TAG).debug(f"TTS生成成功: {_audio_file}")
+            self._put_audio_to_queue_in_order(_stage_index, _seg_index, _audio_file, _text)
         except Exception as e:
-            logger.bind(tag=TAG).error(f"顺序播放器线程出错: {e}")
+            logger.bind(tag=TAG).error(f"独立线程TTS处理出错: {e}")
 
-    def custom_speak_and_play(self, text, stage_index, seg_index, tts_config):
-        """使用指定的TTS配置生成语音并播放"""
-        def _custom_speak_and_play_thread(_text, _stage_index, _seg_index, _tts_config):
-            """在独立线程中执行的TTS生成和处理函数"""
-            try:
-                logger.bind(tag=TAG).debug(f"线程开始处理TTS: {_text[:30]}...")
-                
-                if not _tts_config:
-                    # 使用默认TTS方法
-                    _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
-                    self.conn.story_session.update_tts_stage_dict(_stage_index, _seg_index, _audio_file, _text)
-                    return
-                
-                # 获取TTS类型
-                tts_type = _tts_config.get("type")
-                if not tts_type:
-                    # 如果没有指定TTS类型，使用默认方法
-                    _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
-                    self.conn.story_session.update_tts_stage_dict(_stage_index, _seg_index, _audio_file, _text)
-                    return
+    def _put_audio_to_queue_in_order(self, stage_index, seg_index, audio_file, text):
+        """
+        保证seg顺序地put进tts_queue
+        """
+        session = self.conn.story_session
+        with session.tts_stage_dict_lock:
+            # 初始化缓冲区和指针
+            if not hasattr(session, "tts_seg_buffer"):
+                session.tts_seg_buffer = {}
+            if not hasattr(session, "next_play_seg_index"):
+                session.next_play_seg_index = {}
+            if not hasattr(session, "next_play_stage_index"):
+                session.next_play_stage_index = 0
 
-                # 合并TTS配置
-                merged_config = self._get_merged_tts_config(_tts_config)
+            stage_key = str(stage_index)
+            if stage_key not in session.tts_seg_buffer:
+                session.tts_seg_buffer[stage_key] = {}
+            if stage_key not in session.next_play_seg_index:
+                session.next_play_seg_index[stage_key] = 0
 
-                # 创建TTS实例
-                tts_instance = tts.create_instance(
-                    tts_type,
-                    merged_config,
-                    self.conn.config["delete_audio"]
-                )
+            # 放入缓冲区
+            session.tts_seg_buffer[stage_key][seg_index] = (audio_file, text)
 
-                if not tts_instance:
-                    # 如果创建失败，使用默认方法
-                    logger.bind(tag=TAG).info("创建自定义TTS失败，使用默认方法")
-                    _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
-                    self.conn.story_session.update_tts_stage_dict(_stage_index, _seg_index, _audio_file, _text)
-                    return
+            # 只有当前stage才允许put
+            cur_stage_key = str(session.next_play_stage_index)
+            while cur_stage_key in session.tts_seg_buffer and \
+                  session.next_play_seg_index[cur_stage_key] in session.tts_seg_buffer[cur_stage_key]:
+                idx = session.next_play_seg_index[cur_stage_key]
+                _audio_file, _text = session.tts_seg_buffer[cur_stage_key].pop(idx)
+                cur_text_index = session.incr_text_index()
+                completed_future = Future()
+                completed_future.set_result((_audio_file, _text, cur_text_index))
+                self.conn.recode_first_last_text(_text, cur_text_index)
+                self.conn.tts_queue.put(completed_future)
+                logger.bind(tag=TAG).warning(f"顺序播放器: 已将索引 {cur_text_index} 的音频加入播放队列 : {_text}")
+                session.next_play_seg_index[cur_stage_key] += 1
 
-                # 生成语音文件
-                _audio_file = tts_instance.to_tts(_text)
-                if not _audio_file:
-                    # 如果生成失败，使用默认方法
-                    _audio_file, _text, _index = self.conn.speak_and_play(_text, _stage_index)
-                
-                # 更新TTS阶段字典（保证按顺序播放）
-                logger.bind(tag=TAG).debug(f"TTS生成成功: {_audio_file}")
-                self.conn.story_session.update_tts_stage_dict(_stage_index, _seg_index, _audio_file, _text)
-            except Exception as e:
-                logger.bind(tag=TAG).error(f"独立线程TTS处理出错: {e}")
-        
-        # 创建并启动独立线程来处理TTS生成
-        # daemon=True 确保主程序退出时线程也会退出
-        tts_thread = threading.Thread(
-            target=_custom_speak_and_play_thread,
-            args=(text, stage_index, seg_index, tts_config),
-            daemon=True
-        )
-        tts_thread.start()
-
+                # 判断当前stage是否全部put完
+                seg_count = session.tts_stage_seg_count.get(cur_stage_key, None)
+                if seg_count is not None and session.next_play_seg_index[cur_stage_key] >= seg_count:
+                    # 当前stage全部put完，切换到下一个stage
+                    session.next_play_stage_index += 1
+                    break
     
-    async def _process_story_outline(self, outline_data, stage_index):
+    def _process_story_outline(self, outline_data, stage_index):
         """处理故事大纲阶段的JSON内容"""
         try:
             # 直接使用已经解析的大纲数据
@@ -443,11 +474,12 @@ class StoryRespProcessor:
             if roles:
                 roles_text = "，".join(roles) if isinstance(roles, list) else str(roles)
                 outline_parts.append(f"故事中的角色有：{roles_text}")
-                        
+
+            self.conn.story_session.set_stage_seg_count(stage_index, len(outline_parts))
             # 依次生成语音
             for i, part in enumerate(outline_parts):
                 # 记录文本位置
-                await self._process_narrator(part, stage_index, i)
+                self._process_narrator(part, stage_index, i)
             
         except Exception as e:
             logger.bind(tag=TAG).error(f"处理故事大纲数据时出错: {e}")
@@ -464,7 +496,6 @@ class StoryRespProcessor:
         Returns:
             处理状态，成功为True，失败为False
         """
-        logger.bind(tag=TAG).info(f"开始处理完整文本，长度: {len(complete_text)}, 是否JSON模式: {is_json_mode}")
         
         try:
             # 设置当前状态
@@ -474,14 +505,13 @@ class StoryRespProcessor:
             # 处理文本
             if is_json_mode:
                 # JSON模式处理
-                json_processed = await self._process_json_content(stage, complete_text, stage_index)
+                threading.Thread(
+                    target=self._process_json_content_thread,
+                    args=(stage, complete_text, stage_index),
+                    daemon=True
+                ).start()
                 
-                # 如果JSON处理失败，按普通文本处理
-                if not json_processed:
-                    logger.bind(tag=TAG).warning("JSON处理失败，按普通文本处理")
-                    return await self._process_as_normal_text(complete_text, stage_index)
-                
-                return json_processed
+                return True
             else:
                 # 普通文本模式处理
                 return await self._process_as_normal_text(complete_text, stage_index)
@@ -494,8 +524,7 @@ class StoryRespProcessor:
         """将完整文本按标点符号分段并处理"""
         try:
             text_index = start_text_index
-            processed_chars = 0
-            
+
             # 查找所有标点符号位置
             punct_positions = []
             for i, char in enumerate(text):
@@ -530,4 +559,3 @@ class StoryRespProcessor:
             return True
         except Exception as e:
             logger.bind(tag=TAG).error(f"按普通文本处理时出错: {e}")
-            return False

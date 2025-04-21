@@ -31,7 +31,7 @@ class TTSProviderBase(ABC):
                     logger.bind(tag=TAG).error(f"语音生成失败: {text}:{tmp_file}，再试{max_repeat_time}次")
 
             if max_repeat_time > 0:
-                logger.bind(tag=TAG).info(f"语音生成成功: {text}:{tmp_file}，重试{5 - max_repeat_time}次")
+                logger.bind(tag=TAG).debug(f"语音生成成功: {text}:{tmp_file}，重试{5 - max_repeat_time}次")
 
             return tmp_file
         except Exception as e:

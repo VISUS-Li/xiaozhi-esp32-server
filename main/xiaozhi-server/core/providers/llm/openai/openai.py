@@ -30,7 +30,7 @@ class LLMProvider(LLMProviderBase):
                 stream=True,
                 max_tokens=self.max_tokens,
             )
-            logger.bind(tag=TAG).info(f"调用模型 {self.model_name} 耗时: {time.time() - start_time:.3f}s")
+            logger.bind(tag=TAG).debug(f"调用模型 {self.model_name} 耗时: {time.time() - start_time:.3f}s")
 
             is_active = True
             for chunk in responses:
@@ -63,7 +63,7 @@ class LLMProvider(LLMProviderBase):
                 stream=True,
                 tools=functions
             )
-            logger.bind(tag=TAG).info(f"调用模型 {self.model_name} 耗时: {time.time() - start_time:.3f}s")
+            logger.bind(tag=TAG).debug(f"调用模型 {self.model_name} 耗时: {time.time() - start_time:.3f}s")
 
             for chunk in stream:
                 yield chunk.choices[0].delta.content, chunk.choices[0].delta.tool_calls

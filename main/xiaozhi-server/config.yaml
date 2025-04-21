@@ -311,6 +311,20 @@ TTS:
     # 定义TTS API类型
     type: edge
     voice: zh-CN-XiaoxiaoNeural
+    voice-list:
+      - zh-CN-XiaoyiNeural
+      - zh-CN-YunjianNeural
+      - zh-CN-YunxiNeural
+      - zh-CN-YunxiaNeural
+      - zh-CN-YunyangNeural
+      - zh-CN-liaoning-XiaobeiNeural
+      - zh-CN-shaanxi-XiaoniNeural
+      - zh-HK-HiuGaaiNeural
+      - zh-HK-HiuMaanNeural
+      - zh-HK-WanLungNeural
+      - zh-TW-HsiaoChenNeural
+      - zh-TW-HsiaoYuNeural
+      - zh-TW-YunJheNeural
     output_dir: tmp/
   DoubaoTTS:
     # 定义TTS API类型

@@ -64,6 +64,9 @@ story_continuation:
         before:
           type: "string"
           description: "已经生成的故事内容，用于故事续写，若为空则为首次创作"
+        next_sort:
+          type: "integer"
+          description: "下一个句子的顺序，用于故事续写，若为空则为首次创作，顺序在整个故事的创作中是唯一且有序的，顺序从0开始"
         user_input:
           type: "string"
           description: "用户的输入或反馈"

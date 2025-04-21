@@ -698,6 +698,7 @@ class ConnectionHandler:
                     self.logger.bind(tag=TAG).error(f"TTS出错: {e}")
                 if not self.client_abort:
                     # 如果没有中途打断就发送语音
+                    self.logger.bind(tag=TAG).debug(f"*放入语音播放队列*: {text}")
                     self.audio_play_queue.put((opus_datas, text, text_index))
                 if (
                     self.tts.delete_audio_file
@@ -734,6 +735,8 @@ class ConnectionHandler:
                     if self.stop_event.is_set():
                         break
                     continue
+                # 播放音频
+                self.logger.bind(tag=TAG).info(f"[线程中发送的语音]: {text}")
                 future = asyncio.run_coroutine_threadsafe(
                     sendAudioMessage(self, opus_datas, text, text_index), self.loop
                 )
