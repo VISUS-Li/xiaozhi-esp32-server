@@ -1,7 +1,8 @@
-from core.prompts import PromptManager
-from core.utils import asr, vad, llm, tts, memory, intent
-from config.module_config import get_module_config
 from config.logger import setup_logging
+from config.module_config import get_module_config
+from core.prompts import PromptManager
+import asyncio
+import threading  # 添加threading模块导入
 
 TAG = __name__
 logger = setup_logging()
@@ -18,6 +19,16 @@ class StorySession:
 
         # 初始化不同阶段所需的 LLM 实例
         self._init_llm_instances()
+
+        self.tts_stage_index = -1
+        self.tts_stage_index_lock = asyncio.Lock()
+
+        self.tts_text_index = -1
+        self.tts_text_index_lock = threading.Lock()  # 修改为threading.Lock
+
+        self.tts_stage_dict = {}
+        self.next_play_index = 0
+        
         
     def _create_llm_instance(self, template_name, template_data):
         """根据模板创建LLM实例的公共方法"""
@@ -103,4 +114,51 @@ class StorySession:
         """更新当前阶段"""
         self.stage = new_stage
         return self.stage
+
+    async def incr_stage_index(self):
+        """更新 TTS 索引"""
+        async with self.tts_stage_index_lock:
+            self.tts_stage_index += 1
+            return self.tts_stage_index
+
+    def incr_text_index(self):
+        """更新 TTS 文本索引"""
+        with self.tts_text_index_lock:
+            self.tts_text_index += 1
+            return self.tts_text_index
         
+    def update_tts_stage_dict(self, stage, text_index, audio_file=None, text=None):
+        """更新 TTS 阶段字典
+        
+        Args:
+            stage: 阶段名称
+            text_index: 文本索引
+            audio_file: 音频文件路径
+            text: 文本内容
+        """
+        stage_key = str(stage)
+        if stage_key not in self.tts_stage_dict or not isinstance(self.tts_stage_dict[stage_key], list):
+            self.tts_stage_dict[stage_key] = []
+            
+        # 创建包含音频和文本信息的字典
+        tts_info = {
+            'text_index': text_index,
+            'audio_file': audio_file,
+            'text': text
+        }
+        
+        # 检查是否已存在相同text_index的记录，添加类型和键检查
+        existing_index = None
+        for i, item in enumerate(self.tts_stage_dict[stage_key]):
+            if isinstance(item, dict) and 'text_index' in item and item['text_index'] == text_index:
+                existing_index = i
+                break
+        
+        if existing_index is not None:
+            # 更新已存在的记录
+            self.tts_stage_dict[stage_key][existing_index].update(tts_info)
+        else:
+            # 添加新记录
+            self.tts_stage_dict[stage_key].append(tts_info)
+        # 按text_index排序，确保顺序
+        self.tts_stage_dict[stage_key].sort(key=lambda x: x.get('text_index', 0) if isinstance(x, dict) else 0)

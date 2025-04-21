@@ -35,7 +35,7 @@ class PromptManager:
                 file_path = os.path.join(self.templates_dir, filename)
                 self.load_templates_from_file(file_path)
         
-        logger.bind(tag=TAG).info(f"已加载 {len(self.templates)} 个提示词模板")
+        logger.bind(tag=TAG).debug(f"已加载 {len(self.templates)} 个提示词模板")
     
     def load_templates_from_file(self, file_path: str):
         """从文件加载提示词模板"""
@@ -62,7 +62,7 @@ class PromptManager:
                         try:
                             with open(template_path, 'r', encoding='utf-8') as md_file:
                                 template_content = md_file.read()
-                            logger.bind(tag=TAG).info(f"从 {template_path} 加载了提示词模板内容")
+                            logger.bind(tag=TAG).debug(f"从 {template_path} 加载了提示词模板内容")
                         except Exception as md_error:
                             logger.bind(tag=TAG).error(f"读取提示词Markdown文件 {template_path} 时出错: {str(md_error)}")
                     else:
@@ -87,7 +87,7 @@ class PromptManager:
                 )
                 self.register_template(template)
                 
-            logger.bind(tag=TAG).info(f"从 {file_path} 加载了 {len(templates_data)} 个提示词模板")
+            logger.bind(tag=TAG).debug(f"从 {file_path} 加载了 {len(templates_data)} 个提示词模板")
         except Exception as e:
             logger.bind(tag=TAG).error(f"加载提示词模板文件 {file_path} 时出错: {str(e)}")
     

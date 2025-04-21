@@ -1,12 +1,13 @@
 import asyncio
 import json
 import os
+import datetime  # 添加datetime模块用于生成时间戳
+from concurrent.futures import Future
 
 from loguru import logger
 
 from config.logger import setup_logging
 from core.handle.sendAudioHandle import send_stt_message
-from core.prompts import PromptManager
 from core.storymode.storyRespProcessor import StoryRespProcessor
 from core.storymode.storySession import StorySession
 from core.utils.dialogue import Message
@@ -29,8 +30,8 @@ async def enter_story_mode(conn, text):
         conn.story_session = StorySession(conn, conn.session_id)
     
     # 确保conn具有tts_index_lock属性
-    if not hasattr(conn, 'tts_index_lock'):
-        conn.tts_index_lock = asyncio.Lock()
+    if not hasattr(conn.story_session, 'tts_index_lock'):
+        conn.story_session.tts_stage_index_lock = asyncio.Lock()
         
     
     # 发送用户输入的文本
@@ -40,7 +41,7 @@ async def enter_story_mode(conn, text):
     conn.dialogue.put(Message(role="user", content=text))
     
     # 初始化提示词管理器
-    prompt_manager = PromptManager()
+    prompt_manager = conn.story_session.prompt_manager
     
     # 获取故事模式的初始提示词
     initial_prompt = prompt_manager.get_template("story_mode_intro")
@@ -55,10 +56,11 @@ async def enter_story_mode(conn, text):
     # 使用预先生成的语音文件代替TTS生成
     story_start_file = "tmp/nailong-start.mp3"
     if os.path.exists(story_start_file) and os.path.isfile(story_start_file):
-        # 将音频文件转换为opus格式
-        opus_packets, duration = conn.tts.audio_to_opus_data(story_start_file)
-        # 将音频数据放入播放队列
-        conn.audio_play_queue.put((opus_packets, initial_prompt.template, 0))
+        # 创建future
+        completed_future = Future()
+        completed_future.set_result((story_start_file, initial_prompt.template, 0))
+        # 将音频放入播放队列
+        conn.tts_queue.put(completed_future)
         logger.bind(tag=TAG).info("使用预生成语音文件进行故事模式初始反馈")
     else:
         # 如果预生成文件不存在，回退到实时TTS生成
@@ -84,6 +86,50 @@ async def enter_story_mode(conn, text):
 
     return True
 
+
+async def save_llm_response_to_file(conn, stage, prompt, user_prompt, response):
+    """将LLM响应保存到文件
+    
+    Args:
+        stage: 当前阶段名称
+        prompt: 提示词模板的格式化内容
+        user_prompt: 用户提供的提示内容
+        response: LLM返回的完整响应
+        
+    Returns:
+        filename: 保存的文件名
+    """
+    try:
+        # 创建logs目录和llm_responses子目录
+        log_dir = os.path.join("logs", "llm_responses")
+        os.makedirs(log_dir, exist_ok=True)
+        
+        # 生成文件名，包含时间戳和阶段信息
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{timestamp}_{stage}.json"
+        filepath = os.path.join(log_dir, filename)
+        
+        template = conn.story_session.prompt_manager.get_template(stage)
+        resp_json = template.parse(response, True)
+        # 构建保存内容
+        save_data = {
+            "timestamp": timestamp,
+            "stage": stage,
+            "system_prompt": prompt,
+            "user_prompt": user_prompt,
+            "response": resp_json
+        }
+        
+        # 写入文件
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(save_data, f, ensure_ascii=False, indent=2)
+            
+        logger.bind(tag=TAG).info(f"已保存LLM响应到文件: {filepath}")
+        return filename
+    
+    except Exception as e:
+        logger.bind(tag=TAG).error(f"保存LLM响应到文件时出错: {str(e)}")
+        return None
 
 async def call_llm_with_template(conn, stage, user_prompt):
     """封装LLM调用的通用函数
@@ -128,29 +174,28 @@ async def call_llm_with_template(conn, stage, user_prompt):
             user_prompt
         )
         
+        # 保存LLM响应到文件
+        await save_llm_response_to_file(
+            conn,
+            stage, 
+            prompt_template.formatted_prompt, 
+            user_prompt, 
+            complete_response
+        )
+        
         return complete_response, prompt_template
     
     except Exception as e:
         logger.bind(tag=TAG).error(f"调用LLM时出错 (阶段:{stage}): {str(e)}")
         raise
 
-
-async def get_next_text_index(conn):
-    """获取下一个文本索引，使用锁确保线程安全"""
-    async with conn.tts_index_lock:
-        if not hasattr(conn, 'tts_last_text_index'):
-            conn.tts_last_text_index = 0
-        conn.tts_last_text_index += 1
-        return conn.tts_last_text_index
-
-
-async def process_text_in_background(conn, stage, complete_response, start_text_index=None, next_stage_func=None):
+async def process_text_in_background(conn, stage, complete_response, stage_index=None, next_stage_func=None):
     """后台处理文本的通用函数
     
     Args:
         conn: 连接对象
         complete_response: LLM返回的完整响应
-        start_text_index: 开始的文本索引
+        stage_index: 开始的文本索引
         next_stage_func: 下一阶段要执行的函数
     """
     try:
@@ -158,9 +203,9 @@ async def process_text_in_background(conn, stage, complete_response, start_text_
         processor = StoryRespProcessor(conn)
         
         # 确定开始索引
-        if start_text_index is None:
+        if stage_index is None:
             # 使用锁安全获取下一个索引
-            start_text_index = await get_next_text_index(conn)
+            stage_index = await conn.story_session.incr_stage_index()
         
         # 如果有下一阶段处理函数，立即启动它而不等待文本处理完成
         if next_stage_func:
@@ -172,7 +217,7 @@ async def process_text_in_background(conn, stage, complete_response, start_text_
             stage,
             complete_response,
             is_json_mode=True,
-            start_text_index=start_text_index
+            stage_index=stage_index
         )
             
     except Exception as e:
@@ -187,7 +232,7 @@ async def generate_story_outline(conn, theme_data=None):
         dialogue = conn.story_session.get_dialogue(stage)
         # 如果提供了额外数据，构建输入提示
         # 调用LLM生成内容
-        complete_response, prompt_template = await call_llm_with_template(conn, stage,theme_data)
+        complete_response, prompt_template = await call_llm_with_template(conn, stage, theme_data)
         
         # 更新对话历史
         dialogue.update_system_message(prompt_template.formatted_prompt)
@@ -197,9 +242,9 @@ async def generate_story_outline(conn, theme_data=None):
         conn.story_session.outline_cache = complete_response
         # 更新故事阶段为交互阶段
         conn.story_session.update_stage("story_continuation")
-        
+
         # 获取下一个安全的文本索引
-        next_text_index = await get_next_text_index(conn)
+        next_text_index = await conn.story_session.incr_stage_index()
         
         # 创建后台任务处理文本，并准备故事续写
         asyncio.create_task(process_text_in_background(
@@ -217,7 +262,7 @@ async def generate_story_outline(conn, theme_data=None):
         
         # 通知用户出错
         error_message = "很抱歉，故事创作过程中出现了问题。让我们下次再试吧。"
-        text_index = await get_next_text_index(conn)
+        text_index = await conn.story_session.incr_stage_index()
         conn.recode_first_last_text(error_message, text_index)
         future = conn.executor.submit(conn.speak_and_play, error_message, text_index)
         conn.tts_queue.put(future)
@@ -274,7 +319,7 @@ async def prepare_story_continuation(conn):
         story_ended = await check_story_ending(complete_response, prompt_template)
         
         # 获取下一个安全的文本索引
-        next_text_index = await get_next_text_index(conn)
+        next_text_index = await conn.story_session.incr_stage_index()
         
         # 在后台处理文本，如果故事未结束则继续准备下一段
         next_stage = None if story_ended else prepare_story_continuation
