@@ -1,7 +1,9 @@
 import os
 import yaml
 from typing import Dict, Any, Optional
-from core.utils.util import get_project_dir, read_config
+
+from config.config_loader import get_project_dir, read_config
+
 
 def load_module_config(module_name: str) -> Optional[Dict[str, Any]]:
     """
