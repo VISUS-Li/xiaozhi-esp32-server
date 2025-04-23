@@ -2,7 +2,7 @@ import os
 import argparse
 from ruamel.yaml import YAML
 from collections.abc import Mapping
-from core.utils.util import read_config, get_project_dir
+from config.config_loader import read_config, get_project_dir, load_config
 from config.module_config import merge_configs  # 导入合并配置的函数
 
 default_config_file = "config.yaml"
@@ -63,13 +63,13 @@ def load_config():
 
     parser.add_argument("--config_path", type=str, default=config_file)
     args = parser.parse_args()
-    
+
     # 加载主配置
     config = read_config(args.config_path)
-    
+
     # 合并模块配置
     config = merge_configs(config)
-    
+
     # 初始化目录
     ensure_directories(config)
     return config
@@ -83,7 +83,7 @@ def update_config(config):
         yaml.dump(config, f)
 
 
-def find_missing_keys(new_config, old_config, parent_key=''):
+def find_missing_keys(new_config, old_config, parent_key=""):
     """
     递归查找缺失的配置项
     返回格式：[缺失配置路径]
@@ -105,28 +105,36 @@ def find_missing_keys(new_config, old_config, parent_key=''):
         # 递归检查嵌套字典
         if isinstance(value, Mapping):
             sub_missing = find_missing_keys(
-                value,
-                old_config[key],
-                parent_key=full_path
+                value, old_config[key], parent_key=full_path
             )
             missing_keys.extend(sub_missing)
-
     return missing_keys
 
 
 def check_config_file():
-    old_config_file = get_config_file()
-    global default_config_file
-    if not 'data' in old_config_file:
+    old_config_file = get_project_dir() + "data/." + default_config_file
+    if not os.path.exists(old_config_file):
         return
-    old_config = read_config(get_project_dir() + old_config_file)
+    old_config = load_config()
     new_config = read_config(get_project_dir() + default_config_file)
     # 查找缺失的配置项
     missing_keys = find_missing_keys(new_config, old_config)
+    read_config_from_api = old_config.get("read_config_from_api", False)
+    if read_config_from_api:
+        old_config_origin = read_config(old_config_file)
+        if old_config_origin.get("selected_module") is not None:
+            missing_keys_str = "\n".join(f"- {key}" for key in missing_keys)
+            error_msg = "您的配置文件好像既包含智控台的配置又包含本地配置：\n"
+            error_msg += "\n建议您：\n"
+            error_msg += "1、将根目录的config_from_api.yaml文件复制到data下，重命名为.config.yaml\n"
+            error_msg += "2、按教程配置好接口地址和密钥\n"
+            raise ValueError(error_msg)
+        return
 
     if missing_keys:
+        missing_keys_str = "\n".join(f"- {key}" for key in missing_keys)
         error_msg = "您的配置文件太旧了，缺少了：\n"
-        error_msg += "\n".join(f"- {key}" for key in missing_keys)
+        error_msg += missing_keys_str
         error_msg += "\n建议您：\n"
         error_msg += "1、备份data/.config.yaml文件\n"
         error_msg += "2、将根目录的config.yaml文件复制到data下，重命名为.config.yaml\n"
