@@ -187,7 +187,7 @@ class PromptTemplate:
 ```json
         {schema_str}
 ```
-请确保你的响应可以被JSON解析，并且匹配上述的Schema结构。
+请确保你的响应可以被JSON解析，并且匹配上述的Schema结构。不管什么情况下，都必须保证返回的是一个完整的JSON结构。
         """
 
     def get_max_min_token_formatted(self) -> str:

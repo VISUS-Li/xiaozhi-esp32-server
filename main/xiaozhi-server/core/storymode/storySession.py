@@ -27,7 +27,6 @@ class StorySession:
         self.tts_text_index = -1
         self.tts_text_index_lock = threading.Lock()  # 修改为threading.Lock
 
-        self.tts_stage_dict = {}
         self.tts_stage_dict_lock = threading.Lock()  # 新增：用于保护tts_stage_dict的锁
         self.tts_stage_seg_count = {}  # 新增：记录每个stage的seg总数
         self.next_play_index = 0
@@ -130,28 +129,7 @@ class StorySession:
         with self.tts_text_index_lock:
             self.tts_text_index += 1
             return self.tts_text_index
-        
-    def update_tts_stage_dict(self, stage, seg_index, audio_file=None, text=None):
-        stage_key = str(stage)
-        with self.tts_stage_dict_lock:
-            if stage_key not in self.tts_stage_dict or not isinstance(self.tts_stage_dict[stage_key], list):
-                self.tts_stage_dict[stage_key] = []
-            tts_info = {
-                'text_index': seg_index,
-                'audio_file': audio_file,
-                'text': text
-            }
-            # 保证seg_index唯一
-            existing_index = None
-            for i, item in enumerate(self.tts_stage_dict[stage_key]):
-                if isinstance(item, dict) and 'text_index' in item and item['text_index'] == seg_index:
-                    existing_index = i
-                    break
-            if existing_index is not None:
-                self.tts_stage_dict[stage_key][existing_index].update(tts_info)
-            else:
-                self.tts_stage_dict[stage_key].append(tts_info)
-            self.tts_stage_dict[stage_key].sort(key=lambda x: x.get('text_index', 0) if isinstance(x, dict) else 0)
+
 
     def set_stage_seg_count(self, stage, seg_count):
         """设置每个stage的seg总数"""

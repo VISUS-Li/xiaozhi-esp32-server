@@ -8,20 +8,23 @@ voices:
     - name: "标准旁白"
       description: "平稳清晰的标准旁白音色"
       tts:
-        type: edge
-        voice: zh-CN-YunyangNeural
-    
+        reference_audio: ["tmp/cxk.mp3"]
+        reference_text: ["大家好，最近一直在练习室准备新歌，每天都在追求更好的表现。感谢粉丝们一直以来的支持"]
+
     - name: "温柔旁白"
       description: "柔和舒缓的旁白音色"
       tts:
-        type: edge
-        voice: zh-CN-XiaoxiaoNeural
-    
+        type: fishspeech
+        reference_audio: ["tmp/nailong.mp3"]
+        reference_text: ["大家好！今天的训练也要全力以赴哦！记住，无论是跑步还是学习，保持良好的节奏最重要"]
+
     - name: "戏剧旁白"
       description: "富有戏剧性的旁白音色"
       tts:
-        type: edge
-        voice: zh-CN-YunxiNeural
+        type: fishspeech
+        reference_id: null
+        reference_audio: ["tmp/leijun.mp3"]
+        reference_text: ["大家好！今天给大家带来一款重磅产品，性能提升了80%，但是价格只要友商的一半。这不仅仅是一个产品，更是一个精品。让我问问大家，这个价格，你们觉得怎么样？are you OK？"]
   # 角色音色配置
   characters:
     - name: "女性-年轻"
