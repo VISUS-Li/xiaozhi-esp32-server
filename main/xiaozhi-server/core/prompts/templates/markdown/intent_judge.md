@@ -1,0 +1,3 @@
+请结合用户的输入和历史对话判断用户要进入什么模式，在selected_mode中输出对应的模式
+目前支持的模式有：
+story_mode、normal_mode

@@ -25,10 +25,6 @@ async def enter_story_mode(conn, text):
     """进入故事模式"""
     logger.bind(tag=TAG).info("用户进入故事模式")
 
-    # 创建故事会话
-    if not hasattr(conn, 'story_session'):
-        conn.story_session = StorySession(conn, conn.session_id)
-    
     # 确保conn具有tts_index_lock属性
     if not hasattr(conn.story_session, 'tts_index_lock'):
         conn.story_session.tts_stage_index_lock = asyncio.Lock()
@@ -241,26 +237,27 @@ async def call_llm_with_template(conn, stage, user_prompt):
         
         story_data = prompt_template.parse(complete_response, True)
         if isinstance(story_data, str):
+            story_data_str = story_data
             pass
         elif hasattr(story_data, 'model_dump_json'):
             # Pydantic模型
-            story_data = story_data.model_dump_json()
+            story_data_str = story_data.model_dump_json()
         elif isinstance(story_data, dict):
             # 字典类型
-            story_data = json.dumps(story_data, ensure_ascii=False)
+            story_data_str = json.dumps(story_data, ensure_ascii=False)
         else:
             # 其他类型转字符串
-            story_data = str(story_data)
+            story_data_str = str(story_data)
         # 保存LLM响应到文件
         await save_llm_response_to_file(
             conn,
             stage, 
             prompt_template.formatted_prompt, 
             user_prompt, 
-            story_data
+            story_data_str
         )
         
-        return story_data, prompt_template
+        return story_data_str, prompt_template, story_data
     
     except Exception as e:
         logger.bind(tag=TAG).error(f"调用LLM时出错 (阶段:{stage}): {str(e)}")
@@ -309,14 +306,14 @@ async def generate_story_outline(conn, theme_data=None):
         dialogue = conn.story_session.get_dialogue(stage)
         # 如果提供了额外数据，构建输入提示
         # 调用LLM生成内容
-        complete_response, prompt_template = await call_llm_with_template(conn, stage, theme_data)
+        complete_response_str, prompt_template, complete_response  = await call_llm_with_template(conn, stage, theme_data)
         
         # 更新对话历史
         dialogue.update_system_message(prompt_template.formatted_prompt)
         if theme_data:
             dialogue.put(Message(role="user", content=theme_data))
-        dialogue.put(Message(role="assistant", content=complete_response))
-        conn.story_session.outline_cache = complete_response
+        dialogue.put(Message(role="assistant", content=complete_response_str))
+        conn.story_session.outline_cache = complete_response_str
         # 更新故事阶段为交互阶段
         conn.story_session.update_stage("story_continuation")
 
@@ -327,7 +324,7 @@ async def generate_story_outline(conn, theme_data=None):
         asyncio.create_task(process_text_in_background(
             conn, 
             stage,
-            complete_response, 
+            complete_response_str,
             next_text_index,
             prepare_story_continuation  # 处理完文本后，启动故事续写任务
         ))
@@ -346,16 +343,17 @@ async def generate_story_outline(conn, theme_data=None):
         return False
 
 
-async def check_story_mode_keywords(text):
+async def check_story_mode_keywords(conn, text):
+    # 创建故事会话
+    if not hasattr(conn, 'story_session'):
+        conn.story_session = StorySession(conn, conn.session_id)
     """检查文本中是否包含故事模式的触发关键词"""
-    # 故事模式的触发关键词
-    story_triggers = ["讲个故事", "开始故事", "故事模式", "讲故事", "讲一个故事", 
-                     "说个故事", "故事时间", "开启故事模式"]
-    
+
+    complete_response_str, prompt_template, complete_response = await call_llm_with_template(conn, "intent_judge", text)
+    intent = complete_response.selected_mode
     # 检查文本是否包含触发词
-    for trigger in story_triggers:
-        if trigger in text:
-            return True
+    if intent == "story_mode":
+        return True
     
     return False 
 
@@ -411,14 +409,14 @@ async def prepare_story_continuation(conn):
         }
         
         # 调用LLM生成内容
-        complete_response, prompt_template = await call_llm_with_template(conn, stage, user_prompt)
+        complete_response_str, prompt_template,complete_response = await call_llm_with_template(conn, stage, user_prompt)
         
         # 更新对话历史
         dialogue.update_system_message(prompt_template.formatted_prompt)
-        dialogue.put(Message(role="assistant", content=complete_response))
+        dialogue.put(Message(role="assistant", content=complete_response_str))
         
         # 检查故事是否结束
-        story_ended, next_sort = await get_next_sort(complete_response, prompt_template)
+        story_ended, next_sort = await get_next_sort(complete_response_str, prompt_template)
         conn.story_session.next_sort = next_sort
         
         # 获取下一个安全的文本索引
@@ -429,7 +427,7 @@ async def prepare_story_continuation(conn):
         asyncio.create_task(process_text_in_background(
             conn, 
             stage,
-            complete_response, 
+            complete_response_str,
             next_text_index,
             next_stage
         ))
@@ -472,16 +470,16 @@ async def extract_story_theme(conn, text):
         }
         
         # 调用LLM提取主题
-        theme_result, template_data = await call_llm_with_template(conn, stage, extra_data)
+        theme_result_str, template_data, theme_result = await call_llm_with_template(conn, stage, extra_data)
         
         # 解析结果
         try:
             # 尝试使用解析器解析结果
-            theme_data = template_data.parse(theme_result)
+            theme_data = template_data.parse(theme_result_str)
             return theme_data
         except Exception as parse_error:
             logger.bind(tag=TAG).error(f"解析主题数据时出错: {str(parse_error)}")
-            return theme_result
+            return theme_result_str
             
     except Exception as e:
         logger.bind(tag=TAG).error(f"提取故事主题时出错: {str(e)}")

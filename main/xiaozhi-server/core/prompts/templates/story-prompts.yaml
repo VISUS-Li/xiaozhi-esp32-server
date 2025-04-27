@@ -145,7 +145,7 @@ story_theme_extraction:
 
 content_judge:
   llm: AliLLM
-  template: markdown/content_judge
+  template: markdown/content_judge.md
   type: "story"
   role: "user"
   schema:
@@ -176,3 +176,28 @@ content_judge:
         explanation:
           type: "string"
           description: "判断理由的简要解释"
+
+intent_judge:
+  llm: AliLLM
+  template: markdown/intent_judge.md
+  type: "story"
+  role: "user"
+  schema:
+    title: "IntentJudgeSchema"
+    input:
+      type: "object"
+      required: ["text", "dialog_history"]
+      properties:
+        text:
+          type: "string"
+          description: "用户输入的文本"
+        dialog_history:
+          type: "string"
+          description: "当前对话历史"
+    output:
+      type: "object"
+      required: ["selected_mode"]
+      properties:
+        selected_mode:
+          type: "string"
+          description: "用户输入的意图，请从以下内容中选择：story_mode、normal_mode"
